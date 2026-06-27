@@ -1,0 +1,20 @@
+[Unit]
+Description=WLAN-Fallback aus /boot/firmware/wifi.conf einlesen
+Documentation=https://github.com/emrullaharkun/BIG-gebetszeiten-backend
+ConditionPathExists=/boot/firmware/wifi.conf
+After=local-fs.target NetworkManager.service
+Before=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/wifi-fallback.sh
+RemainAfterExit=true
+
+# --- Hardening (was Sinn ergibt fuer ein Skript das nmcli + Datei-Rename macht) ---
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,169 @@
+#!/bin/bash
+# ============================================
+# fleet-control — Router fuer SSH-Befehle der Fleet-API.
+#
+# Wird per ForceCommand in ~/.ssh/authorized_keys erzwungen, d.h. bei
+# `ssh pi@<wg-ip> reboot` landet der Befehl in $SSH_ORIGINAL_COMMAND und
+# diese Shell nimmt nie Argumente an. Whitelist hier ist die einzige
+# Autorisierungs-Stufe — Privatekey-Leak hat damit Schaden begrenzt auf
+# das hier Erlaubte (kein Shell-Escape moeglich, weil case-Match exakt).
+#
+# Erlaubte Befehle:
+#   reboot           Pi neu starten
+#   shutdown         Pi herunterfahren (poweroff) — kein Remote-Wiedereinschalten!
+#   restart-kiosk    cage/cog killen, Autostart re-launched
+#   logs             letzte 200 journalctl-Lines (ohne SSH-/Session-Eigenrauschen)
+#   screenshot       PNG-Frame des Wayland-Compositors (cage) auf stdout
+#   tv-on            Fernseher per HDMI-CEC einschalten (Image View On)
+#   tv-off           Fernseher per HDMI-CEC in Standby schicken
+#
+# Alles andere -> exit 1 mit Fehlermeldung.
+# ============================================
+
+set -euo pipefail
+
+CMD="${SSH_ORIGINAL_COMMAND:-}"
+
+# HDMI-CEC-Geraet. Pi 4/5 haben ZWEI HDMI-Ports -> /dev/cec0 (HDMI0) und
+# /dev/cec1 (HDMI1). Der TV haengt nur an EINEM; nur dort liefert das EDID eine
+# gueltige physische Adresse (!= f.f.f.f), und nur dann bekommt der Pi eine
+# logische Adresse und sendet als "Playback Device 1" statt "Unregistered".
+# Letzteres quittiert der TV nicht -> der Befehl verpufft (genau dieser Bug,
+# als der TV am falschen Port gesucht wurde).
+# Per Env CEC_DEVICE erzwingbar; sonst Auto-Detect, damit es fleet-weit passt
+# (der TV kann je Standort an HDMI0 ODER HDMI1 stecken).
+CEC_DEV="${CEC_DEVICE:-}"
+
+# Meldet den Adapter als Playback-Geraet an (holt phys.+log. Adresse aus EDID)
+# und liefert Erfolg, wenn dabei eine GUELTIGE phys. Adresse rauskam.
+# f.f.f.f = an diesem Port haengt kein CEC-faehiger TV.
+cec_claim() {
+  cec-ctl -d "$1" --playback >/dev/null 2>&1 || true
+  ! cec-ctl -d "$1" 2>/dev/null | grep -q 'Physical Address *: f\.f\.f\.f'
+}
+
+# Findet das richtige /dev/cecN und beansprucht dort die logische Adresse.
+# Reihenfolge: Env-Override > erster Port mit gueltiger Adresse.
+cec_prepare() {
+  if [ -n "$CEC_DEV" ]; then
+    cec_claim "$CEC_DEV" || true   # explizit gesetzt: nehmen, wie es ist
+    return 0
+  fi
+  for dev in /dev/cec0 /dev/cec1; do
+    [ -e "$dev" ] || continue
+    if cec_claim "$dev"; then CEC_DEV="$dev"; return 0; fi
+  done
+  echo "TV-Steuerung: kein HDMI-Port mit CEC-faehigem TV gefunden (cec0/cec1 ohne phys. Adresse)." >&2
+  exit 1
+}
+
+# cec-ctl liefert AUCH bei "Not Acknowledged" Exit 0 -> ohne diese Pruefung
+# meldet die API faelschlich Erfolg. Darum Ausgabe selbst auswerten: ein NACK
+# (kein Geraet am Bus / TV-CEC aus) wird als echter Fehler nach oben gereicht.
+cec_send() {
+  local label="$1"; shift
+  local out
+  out="$(cec-ctl -d "$CEC_DEV" --to 0 "$@" 2>&1)" || true
+  if printf '%s' "$out" | grep -q "Not Acknowledged"; then
+    echo "$label: TV quittiert nicht am CEC-Bus ($CEC_DEV). HDMI-CEC/Regza-Link am TV aktiv?" >&2
+    exit 1
+  fi
+}
+
+# Vorbedingungen fuer alle TV-Befehle: Tool da, mindestens ein CEC-Device da.
+cec_require() {
+  command -v cec-ctl >/dev/null 2>&1 || { echo "$1: cec-ctl fehlt (Paket v4l-utils)." >&2; exit 1; }
+  ls /dev/cec* >/dev/null 2>&1 || { echo "$1: kein /dev/cec* vorhanden (HDMI direkt verbunden?)." >&2; exit 1; }
+}
+
+case "$CMD" in
+  reboot)
+    # systemctl reboot trennt SSH-Session sofort -> SSH-Client sieht exit 255.
+    # Daher kurzer Sleep + & im Hintergrund, damit Response noch geschrieben wird.
+    echo "Reboot in 2s..."
+    (sleep 2 && sudo /usr/bin/systemctl reboot) &
+    exit 0
+    ;;
+  shutdown)
+    # Wie reboot, aber poweroff. ACHTUNG: danach muss der Pi physisch wieder mit
+    # Strom versorgt werden — kein Remote-Anschalten moeglich.
+    echo "Shutdown in 2s..."
+    (sleep 2 && sudo /usr/bin/systemctl poweroff) &
+    exit 0
+    ;;
+  restart-kiosk)
+    # cage = Wayland-Compositor + Chromium, cog = WPE-Fallback.
+    # Beide werden per .bash_profile auf tty1 wieder gestartet, sobald Login erneuert.
+    # pkill -SIGHUP triggert einen sauberen Shutdown der Browser-Session.
+    sudo /usr/bin/pkill -SIGHUP -x cage 2>/dev/null || true
+    sudo /usr/bin/pkill -SIGHUP -x cog 2>/dev/null || true
+    echo "Kiosk restart triggered."
+    exit 0
+    ;;
+  logs)
+    # -n 200: letzte 200 Zeilen, --no-pager: kein interaktives less, nur stdout.
+    # Standardmaessig journalctl als root, damit auch system-Units rauskommen.
+    # journalctl-Aufruf bleibt EXAKT (sudoers-Whitelist matcht 1:1).
+    #
+    # Danach das Eigen-Rauschen des Abrufs rausfiltern: die SSH-Anmeldung +
+    # sudo + Session-Auf/-Abbau, die genau DIESER logs-Aufruf selbst ausloest,
+    # landen sonst als neueste Zeilen mit der aktuellen Uhrzeit — dann sieht es
+    # bei jedem Refresh so aus, als ob "neue" Logs kommen. Die echten Ereignisse
+    # (Kiosk, Heartbeat, WG, Kernel, ...) bleiben mit ihren echten Zeitstempeln.
+    # grep laeuft als User (kein sudo); || true wegen set -e/pipefail, falls der
+    # Filter mal alles wegnimmt.
+    sudo /usr/bin/journalctl -n 200 --no-pager \
+      | grep -vE '(sshd|sudo|systemd-logind)(\[[0-9]+\])?:|pam_unix\(|New session|Removed session|Started Session|session-c[0-9]+\.scope' \
+      || true
+    exit 0
+    ;;
+  screenshot)
+    # grim ist das Standard-Wayland-Screenshot-Tool. Wir laufen schon als
+    # gebetszeiten-pi (per SSH-User), das ist auch der Compositor-Owner
+    # — also kein sudo, nur die richtigen Env-Vars.
+    # WAYLAND_DISPLAY kann variieren (wayland-0, wayland-1) — Socket dynamisch finden.
+    export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+    WAYLAND_SOCKET=""
+    for sock in "$XDG_RUNTIME_DIR"/wayland-*; do
+      [ -S "$sock" ] || continue
+      case "$sock" in *.lock) continue ;; esac
+      WAYLAND_SOCKET="${sock##*/}"
+      break
+    done
+    if [ -z "$WAYLAND_SOCKET" ]; then
+      echo "screenshot: kein aktiver Wayland-Socket (Kiosk laeuft nicht?)" >&2
+      exit 1
+    fi
+    export WAYLAND_DISPLAY="$WAYLAND_SOCKET"
+    # PNG statt JPEG — viele grim-Builds auf Pi OS haben keinen JPEG-Support.
+    exec /usr/bin/grim -t png -
+    ;;
+  tv-on)
+    # Fernseher per HDMI-CEC wecken. "Image View On" an den TV (logische Adr. 0).
+    # Kein sudo: /dev/cec* ist fuer die video-Gruppe les-/schreibbar (setup.sh
+    # haengt den User dort rein). cec-ctl ist ein One-Shot, daher pro Aufruf
+    # erst Port+Adresse holen (cec_prepare), dann senden+Quittung pruefen (cec_send).
+    cec_require tv-on
+    cec_prepare
+    cec_send tv-on --image-view-on
+    echo "TV-on (CEC) ueber $CEC_DEV gesendet."
+    exit 0
+    ;;
+  tv-off)
+    # Fernseher per HDMI-CEC in Standby. Der Pi laeuft weiter, der Kiosk rendert
+    # weiter — beim naechsten tv-on ist sofort wieder Bild da.
+    cec_require tv-off
+    cec_prepare
+    cec_send tv-off --standby
+    echo "TV-off (CEC) ueber $CEC_DEV gesendet."
+    exit 0
+    ;;
+  "")
+    echo "fleet-control: kein Befehl uebergeben." >&2
+    exit 1
+    ;;
+  *)
+    echo "fleet-control: '$CMD' nicht erlaubt." >&2
+    exit 1
+    ;;
+esac
