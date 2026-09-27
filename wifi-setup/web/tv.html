@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>WLAN einrichten</title>
+<link rel="stylesheet" href="base.css">
+<style>
+  /* Design pixels of a 1920x1080 screen, like dp() in the kiosk. */
+  :root { --dp: min(100vw / 1920, 100vh / 1080); --ease: cubic-bezier(0.2, 0.8, 0.2, 1); }
+  body { height: 100vh; overflow: hidden; cursor: none; }
+  .brand { position: absolute; top: calc(56 * var(--dp)); left: calc(72 * var(--dp)); height: calc(52 * var(--dp)); }
+  .stage { height: 100%; display: flex; align-items: center; justify-content: center; gap: calc(140 * var(--dp)); padding: 0 calc(120 * var(--dp)); }
+  .copy { width: calc(860 * var(--dp)); }
+  .enter { animation: rise 0.5s var(--ease) both; }
+  @keyframes rise { from { opacity: 0; transform: translateY(calc(16 * var(--dp))); } }
+  .tr { display: block; color: var(--text-mid); font-weight: 500; }
+  h1 { margin: 0; font-size: calc(76 * var(--dp)); font-weight: 700; letter-spacing: -0.01em; line-height: 1.15; }
+  h1 .tr { font-size: calc(40 * var(--dp)); margin-top: calc(10 * var(--dp)); letter-spacing: 0; }
+  .body { margin: calc(40 * var(--dp)) 0 0; font-size: calc(34 * var(--dp)); line-height: 1.4; }
+  .body .tr { font-size: calc(27 * var(--dp)); margin-top: calc(6 * var(--dp)); font-weight: 400; }
+
+  .banner { display: flex; gap: calc(20 * var(--dp)); align-items: flex-start; margin: 0 0 calc(44 * var(--dp)); padding: calc(20 * var(--dp)) calc(28 * var(--dp)); border-radius: calc(20 * var(--dp)); background: var(--info-bg); font-size: calc(27 * var(--dp)); line-height: 1.4; }
+  .banner .icon { font-size: calc(40 * var(--dp)); color: var(--text-mid); margin-top: calc(2 * var(--dp)); }
+  .banner .tr { font-size: calc(23 * var(--dp)); font-weight: 400; }
+  .banner.error, .banner.error .tr, .banner.error .icon { background: var(--error-bg); color: var(--error); }
+
+  .steps { display: flex; align-items: center; margin-top: calc(80 * var(--dp)); }
+  .step { display: flex; align-items: center; justify-content: center; width: calc(64 * var(--dp)); height: calc(64 * var(--dp)); border-radius: 50%; background: var(--tonal); color: var(--text-light); font-size: calc(32 * var(--dp)); transition: background 0.5s, color 0.5s, box-shadow 0.5s; }
+  .step.active { background: #ffffff; color: var(--primary); box-shadow: inset 0 0 0 calc(3 * var(--dp)) var(--primary); }
+  .step.done { background: var(--primary); color: var(--on-primary); }
+  .link { position: relative; width: calc(88 * var(--dp)); height: calc(3 * var(--dp)); margin: 0 calc(12 * var(--dp)); border-radius: 2px; background: var(--tonal); overflow: hidden; }
+  .link::after { content: ""; position: absolute; inset: 0; background: var(--primary); transform: scaleX(0); transform-origin: left; transition: transform 0.6s var(--ease); }
+  .link.done::after { transform: scaleX(1); }
+
+  .card { position: relative; flex-shrink: 0; width: calc(440 * var(--dp)); aspect-ratio: 1; border-radius: calc(28 * var(--dp)); border: 1px solid var(--outline); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08); background: #ffffff; }
+  .face { position: absolute; inset: calc(32 * var(--dp)); display: flex; align-items: center; justify-content: center; opacity: 0; transform: scale(0.92); transition: opacity 0.45s var(--ease), transform 0.45s var(--ease); }
+  .face.on { opacity: 1; transform: none; }
+  .face img { width: 100%; height: 100%; }
+  .orb { position: relative; display: flex; align-items: center; justify-content: center; width: 62%; aspect-ratio: 1; border-radius: 50%; background: var(--card); color: var(--primary); font-size: calc(128 * var(--dp)); }
+  .ring { position: absolute; inset: 0; border-radius: 50%; border: calc(3 * var(--dp)) solid var(--primary); opacity: 0; }
+  .face.on .ring { animation: ripple 2.6s var(--ease) infinite; }
+  .face.on .ring + .ring { animation-delay: 1.3s; }
+  @keyframes ripple { from { opacity: 0.45; transform: scale(1); } to { opacity: 0; transform: scale(1.5); } }
+
+  .waves path, .waves circle { fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; opacity: 0.2; }
+  .waves circle { fill: currentColor; stroke: none; opacity: 1; }
+  .face.on .waves path { animation: wave 1.8s ease-in-out infinite; }
+  .face.on .waves path:nth-of-type(2) { animation-delay: 0.25s; }
+  .face.on .waves path:nth-of-type(3) { animation-delay: 0.5s; }
+  @keyframes wave { 0%, 100% { opacity: 0.2; } 35%, 60% { opacity: 1; } }
+
+  .done-orb { background: var(--primary); color: var(--on-primary); }
+  .face.on .done-orb { animation: pop 0.6s var(--ease) both; }
+  .face.on .burst { animation: burst 0.9s var(--ease) 0.2s both; }
+  .check { width: 1em; height: 1em; fill: none; stroke: currentColor; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 20; stroke-dashoffset: 20; }
+  .face.on .check { animation: draw 0.45s var(--ease) 0.3s forwards; }
+  @keyframes pop { from { transform: scale(0.5); opacity: 0; } 60% { transform: scale(1.06); opacity: 1; } }
+  @keyframes burst { from { opacity: 0.5; transform: scale(1); } to { opacity: 0; transform: scale(1.6); } }
+  @keyframes draw { to { stroke-dashoffset: 0; } }
+
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } .check { stroke-dashoffset: 0; } }
+</style>
+</head>
+<body>
+<img class="brand" src="big-mark.png" alt="BIG">
+<main class="stage">
+  <section class="copy">
+    <div id="text">
+      <p class="banner" id="banner" hidden>
+        <svg class="icon" viewBox="0 0 24 24"><path id="banner-icon"/></svg>
+        <span><span id="banner-de"></span><span class="tr" id="banner-tr"></span></span>
+      </p>
+      <h1><span id="title-de"></span><span class="tr" id="title-tr"></span></h1>
+      <p class="body"><span id="body-de"></span><span class="tr" id="body-tr"></span></p>
+    </div>
+    <div class="steps" aria-hidden="true">
+      <div class="step" data-step="0"><svg class="icon" viewBox="0 0 24 24"><path d="M9.5 6.5v3h-3v-3h3M11 5H5v6h6V5zm-1.5 9.5v3h-3v-3h3M11 13H5v6h6v-6zm6.5-6.5v3h-3v-3h3M19 5h-6v6h6V5zm-6 8h1.5v1.5H13V13zm1.5 1.5H16V16h-1.5v-1.5zM16 13h1.5v1.5H16V13zm-3 3h1.5v1.5H13V16zm1.5 1.5H16V19h-1.5v-1.5zM16 16h1.5v1.5H16V16zm1.5-1.5H19V16h-1.5v-1.5zm0 3H19V19h-1.5v-1.5zM22 7h-2V4h-3V2h5v5zm0 15v-5h-2v3h-3v2h5zM2 22h5v-2H4v-3H2v5zM2 2v5h2V4h3V2H2z"/></svg></div>
+      <div class="link" data-link="0"></div>
+      <div class="step" data-step="1"><svg class="icon" viewBox="0 0 24 24"><path d="M17 1.01 7 1c-1.1 0-2 .9-2 2v18c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V3c0-1.1-.9-1.99-2-1.99zM17 19H7V5h10v14z"/></svg></div>
+      <div class="link" data-link="1"></div>
+      <div class="step" data-step="2"><svg class="icon" viewBox="0 0 24 24"><path d="M1 9l2 2c4.97-4.97 13.03-4.97 18 0l2-2C16.93 2.93 7.08 2.93 1 9zm8 8l3 3 3-3c-1.65-1.66-4.34-1.66-6 0zm-4-4l2 2c2.76-2.76 7.24-2.76 10 0l2-2C15.14 9.14 8.87 9.14 5 13z"/></svg></div>
+    </div>
+  </section>
+
+  <figure class="card" aria-hidden="true">
+    <div class="face" data-face="wifi"><img src="qr/wifi.svg" alt=""></div>
+    <div class="face" data-face="page"><img src="qr/page.svg" alt=""></div>
+    <div class="face" data-face="phone">
+      <div class="orb"><span class="ring"></span><span class="ring"></span><svg class="icon" viewBox="0 0 24 24"><path d="M17 1.01 7 1c-1.1 0-2 .9-2 2v18c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V3c0-1.1-.9-1.99-2-1.99zM17 19H7V5h10v14z"/></svg></div>
+    </div>
+    <div class="face" data-face="connecting">
+      <div class="orb"><svg class="icon waves" viewBox="0 0 24 24"><circle cx="12" cy="18.5" r="1.7"/><path d="M8.5 15a5 5 0 0 1 7 0"/><path d="M5.5 12a9.2 9.2 0 0 1 13 0"/><path d="M2.5 9a13.4 13.4 0 0 1 19 0"/></svg></div>
+    </div>
+    <div class="face" data-face="connected">
+      <div class="orb done-orb"><span class="ring burst"></span><svg class="check" viewBox="0 0 24 24"><path d="M6 12.5l4 4 8-9"/></svg></div>
+    </div>
+  </figure>
+</main>
+<script>
+  const WIFI_OFF = "M23.64 7c-.45-.34-4.93-4-11.64-4-1.5 0-2.89.19-4.15.48L18.18 13.8 23.64 7zm-6.6 8.22L3.27 1.44 2 2.72l2.05 2.06C1.91 5.76.59 6.82.36 7l11.63 14.49.01.01.01-.01 3.9-4.86 3.32 3.32 1.27-1.27-3.46-3.46z";
+  const ERROR = "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z";
+
+  const TEXT = {
+    wifi: {
+      title: ["WLAN einrichten", "Wi-Fi kurulumu"],
+      body: ["Scanne den Code mit der Handykamera.", "Kodu telefon kamerasıyla tarayın."],
+    },
+    phone: {
+      title: ["Weiter auf dem Handy", "Telefonda devam edin"],
+      body: ["Wähle das WLAN der Moschee und gib das Passwort ein.", "Caminin Wi-Fi ağını seçin ve şifresini girin."],
+    },
+    page: {
+      title: ["Weiter auf dem Handy", "Telefonda devam edin"],
+      body: ["Kein Fenster auf dem Handy? Scanne diesen Code.", "Telefonda sayfa açılmadı mı? Bu kodu tarayın."],
+    },
+    connecting: {
+      title: ["Verbinde mit dem WLAN", "Wi-Fi ağına bağlanılıyor"],
+      body: ["Einen Moment bitte.", "Lütfen biraz bekleyin."],
+    },
+    connected: {
+      title: ["Verbunden", "Bağlandı"],
+      body: ["Die Anzeige startet gleich.", "Ekran birazdan açılıyor."],
+    },
+    lost: [
+      "Das gespeicherte WLAN ist gerade nicht erreichbar. Sobald es zurück ist, geht es von selbst weiter.",
+      "Kayıtlı Wi-Fi ağına şu an ulaşılamıyor. Ağ geri geldiğinde otomatik olarak devam edilir.",
+    ],
+    failed: ["Das WLAN-Passwort war falsch.", "Wi-Fi şifresi yanlıştı."],
+    error: ["Die Verbindung hat nicht geklappt. Bitte nochmal.", "Bağlantı kurulamadı. Lütfen tekrar deneyin."],
+  };
+  const STEP = { wifi: 0, phone: 1, page: 1, connecting: 2, connected: 3 };
+
+  const $ = (id) => document.getElementById(id);
+  const pair = (id, [de, tr]) => { $(`${id}-de`).textContent = de; $(`${id}-tr`).textContent = tr; };
+  let shown = "";
+
+  function render(state) {
+    const view = state.step === "phone" && state.pageFallback ? "page" : state.step;
+    const key = `${view}|${state.notice || ""}`;
+    if (key === shown) return;
+    shown = key;
+
+    const text = TEXT[view];
+    pair("title", text.title);
+    pair("body", text.body);
+    const notice = view === "wifi" && state.notice;
+    $("banner").hidden = !notice;
+    $("banner").classList.toggle("error", notice !== "lost");
+    if (notice) {
+      pair("banner", TEXT[notice]);
+      $("banner-icon").setAttribute("d", notice === "lost" ? WIFI_OFF : ERROR);
+    }
+    const box = $("text");
+    box.classList.remove("enter");
+    void box.offsetWidth;
+    box.classList.add("enter");
+
+    const current = STEP[view];
+    document.querySelectorAll(".step").forEach((el) => {
+      const i = Number(el.dataset.step);
+      el.classList.toggle("done", i < current);
+      el.classList.toggle("active", i === current);
+    });
+    document.querySelectorAll(".link").forEach((el) => el.classList.toggle("done", Number(el.dataset.link) < current));
+    document.querySelectorAll(".face").forEach((el) => el.classList.toggle("on", el.dataset.face === view));
+  }
+
+  const DEMO = {
+    wifi: { step: "wifi" },
+    lost: { step: "wifi", notice: "lost" },
+    failed: { step: "wifi", notice: "failed" },
+    error: { step: "wifi", notice: "error" },
+    phone: { step: "phone" },
+    fallback: { step: "phone", pageFallback: true },
+    connecting: { step: "connecting" },
+    connected: { step: "connected" },
+  };
+
+  const params = new URLSearchParams(location.search);
+  const next = params.get("next");
+  const demo = params.get("demo");
+  let failures = 0;
+  let connectedAt = 0;
+
+  // Back to the kiosk once connected, or when the setup service is gone.
+  function leave() {
+    if (next && /^https?:\/\//.test(next)) location.replace(next);
+  }
+
+  async function poll() {
+    try {
+      const state = await fetch("api/state", { cache: "no-store" }).then((r) => r.json());
+      failures = 0;
+      render(state);
+      if (state.step === "connected") connectedAt ||= Date.now();
+    } catch {
+      failures += 1;
+    }
+    if ((connectedAt && Date.now() - connectedAt > 3200) || failures >= 5) leave();
+    setTimeout(poll, 1000);
+  }
+
+  if (demo === "tour") {
+    const tour = ["wifi", "phone", "connecting", "connected"];
+    let i = 0;
+    render(DEMO[tour[0]]);
+    setInterval(() => { i = (i + 1) % tour.length; render(DEMO[tour[i]]); }, 3000);
+  } else if (demo) {
+    render(DEMO[demo]);
+  } else {
+    poll();
+  }
+</script>
+</body>
+</html>

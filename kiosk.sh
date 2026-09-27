@@ -30,6 +30,23 @@ if [ -r /etc/fleet/kiosk-id ]; then
   [ -n "$KID" ] && KIOSK_URL="${KIOSK_BASE_URL}/?kiosk=1&kid=${KID}"
 fi
 
+# Wi-Fi setup (wifi-setup/): while it runs the TV shows its local page, which returns
+# to the kiosk once connected. Without the service this is the plain kiosk as before.
+START_URL="$KIOSK_URL"
+if [ -f /etc/systemd/system/big-wifi-setup.service ]; then
+  SETUP_STATE=""
+  for _ in $(seq 1 30); do
+    SETUP_STATE="$(cat /run/big-wifi-setup/state 2>/dev/null || true)"
+    [ -n "$SETUP_STATE" ] && [ "$SETUP_STATE" != "checking" ] && break
+    sleep 1
+  done
+  if [ "$SETUP_STATE" = "setup" ]; then
+    NEXT="$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$KIOSK_URL")"
+    START_URL="http://127.0.0.1/tv.html?next=${NEXT}"
+    echo "WLAN-Setup aktiv -> $START_URL"
+  fi
+fi
+
 CHROMIUM_BIN=""
 for candidate in /usr/lib/chromium/chromium /usr/lib/chromium-browser/chromium-browser; do
   if [ -x "$candidate" ]; then CHROMIUM_BIN="$candidate"; break; fi
@@ -84,4 +101,4 @@ exec cage -d -- "$CHROMIUM_BIN" \
   --disable-smooth-scrolling \
   --disable-background-timer-throttling \
   --disable-renderer-backgrounding \
-  "$KIOSK_URL"
+  "$START_URL"

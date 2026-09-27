@@ -206,7 +206,7 @@ sudo systemctl set-default multi-user.target
 
 # --- WLAN-Fallback Service (Phase 3 light) ---
 # Ermoeglicht "Operator legt /boot/firmware/wifi.conf ab → Pi joint Heim-WLAN
-# beim naechsten Boot". Captive-Portal-Variante (comitup) kommt spaeter.
+# beim naechsten Boot". Ohne Laptop geht es ueber den Fernseher (wifi-setup/, unten).
 # Idempotent: wifi-fallback.sh + .service werden bei jedem setup.sh-Run
 # ueberschrieben (deren Konfig steckt in der wifi.conf, nicht im Service).
 echo "[+] WLAN-Fallback Service installieren..."
@@ -218,6 +218,30 @@ if [ -f "$SCRIPT_DIR/wifi-fallback.sh" ] && [ -f "$SCRIPT_DIR/wifi-fallback.serv
   echo "  wifi-fallback.service enabled (feuert nur wenn /boot/firmware/wifi.conf existiert)."
 else
   echo "  SKIP: wifi-fallback.sh oder .service fehlt im SCRIPT_DIR."
+fi
+
+# --- WLAN-Setup ueber den Fernseher (wifi-setup/) ---
+# Ohne WLAN beim Start: eigenes Setup-WLAN, QR-Code auf dem TV, Eingabe am Handy.
+echo "[+] WLAN-Setup ueber den Fernseher installieren..."
+if [ -f "$SCRIPT_DIR/wifi-setup/wifi_setup.py" ]; then
+  sudo apt install -y qrencode dnsmasq-base iw
+  # Without a Wi-Fi country Raspberry Pi OS keeps the radio blocked (no Wi-Fi in the Imager).
+  WIFI_COUNTRY="$(sudo raspi-config nonint get_wifi_country 2>/dev/null || true)"
+  if [ -z "$WIFI_COUNTRY" ] || [ "$WIFI_COUNTRY" = "00" ]; then
+    sudo raspi-config nonint do_wifi_country DE || echo "  WARN: WLAN-Land nicht gesetzt."
+  fi
+  sudo install -d -m 0755 -o root -g root /usr/local/lib/big-wifi-setup/web
+  sudo install -m 0755 -o root -g root "$SCRIPT_DIR/wifi-setup/wifi_setup.py" /usr/local/lib/big-wifi-setup/wifi_setup.py
+  sudo install -m 0644 -o root -g root "$SCRIPT_DIR"/wifi-setup/web/* /usr/local/lib/big-wifi-setup/web/
+  sudo install -m 0644 -o root -g root "$SCRIPT_DIR/wifi-setup/wifi-setup.service" /etc/systemd/system/big-wifi-setup.service
+  # Every name resolves to the Pi while the setup Wi-Fi runs, so phones open the setup page.
+  sudo install -d -m 0755 /etc/NetworkManager/dnsmasq-shared.d
+  echo "address=/#/10.42.0.1" | sudo tee /etc/NetworkManager/dnsmasq-shared.d/big-setup.conf > /dev/null
+  sudo systemctl daemon-reload
+  sudo systemctl enable big-wifi-setup.service
+  echo "  big-wifi-setup.service enabled (greift beim naechsten Start)."
+else
+  echo "  SKIP: wifi-setup/ fehlt im SCRIPT_DIR."
 fi
 
 # --- Taeglicher Reboot um 03:00 ---

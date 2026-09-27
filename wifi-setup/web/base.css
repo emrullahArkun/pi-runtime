@@ -1,0 +1,60 @@
+/* Tokens mirror frontend/src/theme/muiTheme.ts and kioskTheme.ts (light). */
+@font-face {
+  font-family: "Noto Sans";
+  src: url("noto-sans.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Noto Sans";
+  src: url("noto-sans-tr.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+  unicode-range: U+011E-011F, U+0130-0131, U+015E-015F;
+}
+
+:root {
+  --primary: #0f7a70;
+  --on-primary: #ffffff;
+  --text: #152624;
+  --text-2: #56625f;
+  --text-mid: #3d5553;
+  --text-light: #6b8481;
+  --divider: #e1e8e6;
+  --input: #cfd9d7;
+  --tonal: #e8eceb;
+  --card: #e6f5f3;
+  --outline: rgba(27, 172, 159, 0.15);
+  --error: #b3261e;
+  --error-bg: #fbeceb;
+  --info-bg: #f1f4f3;
+  --success: #1e7a3c;
+  --font: "Noto Sans", system-ui, sans-serif;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  background: #ffffff;
+  color: var(--text);
+  font-family: var(--font);
+  -webkit-font-smoothing: antialiased;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+.icon {
+  width: 1em;
+  height: 1em;
+  fill: currentColor;
+  flex-shrink: 0;
+}
