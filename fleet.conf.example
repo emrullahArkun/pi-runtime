@@ -17,9 +17,8 @@ FLEET_API_URL=https://bigfleet.ipv64.net
 # spaeter ?kiosk=1&kid=<uuid> dran).
 KIOSK_BASE_URL=https://big-gebetszeiten.vercel.app
 
-# Hinweis: Der Token wird per `ssh <VPS_ALIAS> 'sudo manage-pis add <name>'`
-# erzeugt. Der VPS-Wrapper /usr/local/sbin/manage-pis sourct /etc/fleet-api/env
-# selbst — daher sind hier KEINE DB-/Pfad-Angaben noetig.
+# Hinweis: Der Token wird per `ssh <VPS_ALIAS> 'sudo fleet manage-pis add <name>'`
+# erzeugt (im fleet-api-Container) — daher sind hier KEINE DB-/Pfad-Angaben noetig.
 
 # --- Optional: WLAN-Default ---
 # Nur noetig, wenn du WLAN NICHT schon im Pi Imager gesetzt hast. Normalfall

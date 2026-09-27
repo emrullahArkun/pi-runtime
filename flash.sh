@@ -24,7 +24,7 @@
 #
 # Tipps:
 #   - Device finden: `lsblk` (z.B. /dev/sdX, NICHT /dev/sdX1)
-#   - Token erzeugen: `manage-pis add` auf dem VPS
+#   - Token erzeugen: `sudo fleet manage-pis add <name>` auf dem VPS
 
 set -euo pipefail
 

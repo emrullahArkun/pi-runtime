@@ -2,7 +2,7 @@
 # provision-pi.sh — One-Command-Provisioning fuer einen Fleet-Pi.
 #
 # Schachtelt die zwei bestehenden Schritte zu einem Aufruf:
-#   1) Token am VPS erzeugen   (ssh <vps> '... manage-pis.js add <name>')
+#   1) Token am VPS erzeugen   (ssh <vps> 'sudo fleet manage-pis add <name>')
 #   2) SD praeparieren         (sudo ./flash.sh --token <token> ...)
 # Der Token wird automatisch aus der manage-pis-Ausgabe gegriffen und
 # durchgereicht — kein Copy-Paste mehr.
@@ -155,9 +155,8 @@ esac
 # ─── 1) Token am VPS erzeugen ─────────────────────────────────────────
 echo
 echo "[1/2] Token am VPS erzeugen (manage-pis add \"$NAME\")..."
-# Nutzt den VPS-Wrapper /usr/local/sbin/manage-pis (von 06-api.sh installiert):
-# der sourct /etc/fleet-api/env selbst, daher keine DB_PATH/Pfad-Angaben noetig.
-REMOTE_CMD="sudo manage-pis add \"$NAME\""
+# `fleet manage-pis` runs inside the fleet-api container, against the live database.
+REMOTE_CMD="sudo fleet manage-pis add \"$NAME\""
 if ! ADD_OUT="$(ssh "$VPS_ALIAS" "$REMOTE_CMD")"; then
   echo "FEHLER: manage-pis add auf dem VPS fehlgeschlagen."
   printf '%s\n' "$ADD_OUT"
@@ -168,7 +167,7 @@ printf '%s\n' "$ADD_OUT"
 TOKEN="$(printf '%s\n' "$ADD_OUT" | awk '/enrollment_token:/ {print $2; exit}' | tr -d '[:space:]')"
 if [ -z "$TOKEN" ]; then
   echo "FEHLER: Konnte enrollment_token nicht aus der Ausgabe lesen."
-  echo "       Pruefe das Ausgabeformat / die manage-pis-Pfade in fleet.conf."
+  echo "       Pruefe die Ausgabe von: ssh $VPS_ALIAS 'sudo fleet manage-pis add <name>'"
   exit 1
 fi
 echo "  -> Token erhalten (${#TOKEN} Zeichen)."
@@ -195,5 +194,5 @@ echo "Der Pi bootet, zieht pi-runtime, laeuft setup.sh selbst und landet im Kios
 echo "(First-Boot dauert real ~5-15min wegen apt + Paketen)."
 echo
 echo "Status checken:"
-echo "  ssh $VPS_ALIAS 'sudo manage-pis list'"
+echo "  ssh $VPS_ALIAS 'sudo fleet manage-pis list'"
 echo "  oder im Admin-Panel (#admin)."
