@@ -42,8 +42,7 @@
   .ring { position: absolute; inset: 0; border-radius: 50%; border: 2px solid var(--primary); opacity: 0; animation: ripple 2.6s var(--ease) infinite; }
   .ring + .ring { animation-delay: 1.3s; }
   @keyframes ripple { from { opacity: 0.45; transform: scale(1); } to { opacity: 0; transform: scale(1.6); } }
-  .sent h2 { margin: 36px 0 8px; font-size: 22px; font-weight: 700; }
-  .sent p { margin: 0; font-size: 16px; line-height: 1.5; color: var(--text-2); }
+  .sent h2 { margin: 36px 0 0; font-size: 22px; font-weight: 700; }
   @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
 </style>
 </head>
@@ -71,7 +70,6 @@
 <main class="sent" id="sent" hidden>
   <div class="orb"><span class="ring"></span><span class="ring"></span><svg class="icon" viewBox="0 0 24 24"><path d="M21 3H3c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h5v2h8v-2h5c1.1 0 1.99-.9 1.99-2L23 5c0-1.1-.9-2-2-2zm0 14H3V5h18v12z"/></svg></div>
   <h2 data-t="sentTitle"></h2>
-  <p data-t="sentBody"></p>
 </main>
 
 <template id="password-tpl">
@@ -91,14 +89,12 @@
       none: "Keine Netze gefunden. Schalte die Anzeige kurz aus und wieder an.",
       password: "Passwort", show: "Passwort anzeigen", tooShort: "Mindestens 8 Zeichen", connect: "Verbinden",
       sentTitle: "Schau jetzt auf den Fernseher",
-      sentBody: "Die Anzeige verbindet sich jetzt mit dem WLAN. Dein Handy wird dabei vom Setup-WLAN getrennt, das ist normal.",
     },
     tr: {
       langSwitch: "Deutsch", title: "Wi-Fi kurulumu", networks: "Bulunan ağlar",
       none: "Ağ bulunamadı. Ekranı kısa süreliğine kapatıp tekrar açın.",
       password: "Şifre", show: "Şifreyi göster", tooShort: "En az 8 karakter", connect: "Bağlan",
       sentTitle: "Şimdi televizyona bakın",
-      sentBody: "Ekran şimdi Wi-Fi ağına bağlanıyor. Telefonunuzun kurulum ağıyla bağlantısı bu sırada kesilir, bu normaldir.",
     },
   };
   const LOCK = "M18 8h-1V6A5 5 0 0 0 7 6v2H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10a2 2 0 0 0-2-2zM9 6a3 3 0 0 1 6 0v2H9V6z";
