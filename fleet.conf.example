@@ -1,0 +1,29 @@
+# fleet.conf — optionale Overrides fuer provision-pi.sh.
+#
+# provision-pi.sh hat sinnvolle Defaults eingebaut (VPS=hetzner + Prod-URLs).
+# Diese Datei ist NUR noetig, wenn du davon abweichst — dann anlegen:
+#   cp fleet.conf.example fleet.conf
+# und nur die Zeilen eintragen, die du aendern willst (Rest bleibt Default).
+# fleet.conf ist gitignored (enthaelt deinen VPS-Alias / ggf. WLAN-Defaults).
+
+# SSH-Alias oder user@host des VPS (so wie du normal `ssh <alias>` machst).
+# Muss in deiner ~/.ssh/config stehen oder ein erreichbares user@host sein.
+VPS_ALIAS=hetzner
+
+# Fleet-API (kommt in die fleet-enrollment.txt auf der SD).
+FLEET_API_URL=https://bigfleet.ipv64.net
+
+# Basis-URL der Kiosk-Webapp (kommt in die fleet-enrollment.txt; der Pi haengt
+# spaeter ?kiosk=1&kid=<uuid> dran).
+KIOSK_BASE_URL=https://big-gebetszeiten.vercel.app
+
+# Hinweis: Der Token wird per `ssh <VPS_ALIAS> 'sudo manage-pis add <name>'`
+# erzeugt. Der VPS-Wrapper /usr/local/sbin/manage-pis sourct /etc/fleet-api/env
+# selbst — daher sind hier KEINE DB-/Pfad-Angaben noetig.
+
+# --- Optional: WLAN-Default ---
+# Nur noetig, wenn du WLAN NICHT schon im Pi Imager gesetzt hast. Normalfall
+# (Imager macht WLAN) -> leer lassen. Pro Pi via --ssid/--psk ueberschreibbar.
+DEFAULT_SSID=
+DEFAULT_PSK=
+COUNTRY=DE
