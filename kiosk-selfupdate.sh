@@ -1,14 +1,10 @@
 #!/bin/bash
-# Taeglicher Pull der Repo-Quelle. Holt nur Aenderungen — nimmt sie aber nicht
-# aktiv in Betrieb. Greifen tun sie:
-#   - kiosk.sh / kiosk-cog.sh: beim naechsten Reboot (taeglich 03:00 via Cron)
-#   - fleet-control + sudoers: erst nach manuellem `bash setup.sh` (zu sensibel
-#     fuer Auto-Apply — kann remote-control unbrauchbar machen wenn was kaputt geht)
-#
-# Schlaegt git pull fehl (Netz weg, FS read-only, Konflikt) → exit 0, Pi laeuft
-# einfach mit alter Version weiter. Kein Brick-Risiko.
-#
-# Wird von /etc/cron.d/kiosk-selfupdate als root aufgerufen.
+# Nightly pull of pi-runtime into /opt/kiosk (cron, as root), only fast-forward. What
+# takes effect when:
+#   - fleet-heartbeat.sh: right away (it only reads and reports)
+#   - kiosk.sh / kiosk-cog.sh: at the next reboot (daily 03:00)
+#   - fleet-control, sudoers and the rest: only with a manual `bash setup.sh`
+# A failed pull leaves the Pi on its current state and still exits 0.
 
 set -uo pipefail
 
@@ -61,6 +57,12 @@ else
       fi
     done
   done
+fi
+
+HEARTBEAT_SRC="$REPO_DIR/fleet-heartbeat.sh"
+HEARTBEAT_DST=/usr/local/sbin/fleet-heartbeat.sh
+if [ -f "$HEARTBEAT_SRC" ] && ! cmp -s "$HEARTBEAT_SRC" "$HEARTBEAT_DST"; then
+  install -m 0755 -o root -g root "$HEARTBEAT_SRC" "$HEARTBEAT_DST" && log "  fleet-heartbeat.sh -> $HEARTBEAT_DST"
 fi
 
 # Log rotieren — vermeiden dass die Datei ewig waechst (1 MB cap).

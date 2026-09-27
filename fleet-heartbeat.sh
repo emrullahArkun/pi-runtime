@@ -1,13 +1,11 @@
 #!/bin/bash
-# Installed by setup.sh — sendet POST /pi/heartbeat ueber WG-Tunnel
-# (inkl. Hardware-Snapshot) und persistiert die vom Server zurueckgelieferte
-# kioskId nach /etc/fleet/kiosk-id.
+# POST /pi/heartbeat through the tunnel with a snapshot of the Pi, and keep the kiosk id
+# the server hands back in /etc/fleet/kiosk-id. Installed by setup.sh and kept current by
+# the nightly self-update. Every probe falls back to null or "", never fails the run.
 set -euo pipefail
 export LC_ALL=C   # deterministische Zahlenformatierung (Punkt, nicht Komma)
 UP=$(cut -d. -f1 /proc/uptime)
 
-# --- Hardware-Snapshot. Pi-spezifisches (Temp/Throttling) mit Fallback auf
-#     JSON null bzw. leeren String, damit jq nie auf invalidem Input bricht. ---
 TEMP="$(awk '{printf "%.1f", $1/1000}' /sys/class/thermal/thermal_zone0/temp 2>/dev/null || true)"
 LOAD1="$(awk '{print $1}' /proc/loadavg 2>/dev/null || true)"
 CORES="$(nproc 2>/dev/null || true)"
@@ -69,20 +67,65 @@ case "$IFACE" in
 esac
 : "${WIFI_DBM:=null}"
 
+# --- Screen on HDMI: connected or not, and the mode it prefers (first line of `modes`).
+DISPLAY_CONNECTED=null; DISPLAY_MODE=""
+for conn in "${DRM_DIR:-/sys/class/drm}"/card*-HDMI-A-*; do
+  [ -r "$conn/status" ] || continue
+  if [ "$(cat "$conn/status")" = connected ]; then
+    DISPLAY_CONNECTED=true
+    DISPLAY_MODE="$(head -n 1 "$conn/modes" 2>/dev/null || true)"
+    break
+  fi
+  DISPLAY_CONNECTED=false
+done
+
+# --- Storage: read-only root (OverlayFS) and errors of the SD card or any ext4 in the
+#     kernel log since boot; failing cards usually announce themselves this way.
+OVERLAY=false
+grep -qE '^overlay / overlay' "${MOUNTS_FILE:-/proc/mounts}" 2>/dev/null && OVERLAY=true
+KLOG="$(journalctl -k -b -q --no-pager 2>/dev/null || dmesg 2>/dev/null || true)"
+STORAGE_ERRORS=null
+if [ -n "$KLOG" ]; then
+  STORAGE_ERRORS="$(printf '%s\n' "$KLOG" | grep -c -E 'mmcblk[0-9]+.*error|error.*mmcblk[0-9]|EXT4-fs error' || true)"
+fi
+
+# --- Software: the monorepo commit /opt/kiosk was mirrored from, and how the last nightly
+#     self-update went (its log lines start with "[<UTC time>] ").
+KIOSK_DIR="${KIOSK_DIR:-/opt/kiosk}"
+RUNTIME_COMMIT="$(git -c safe.directory="$KIOSK_DIR" -C "$KIOSK_DIR" log -1 --format=%s 2>/dev/null \
+  | sed -n 's/^sync from monorepo @ \([0-9a-f]\{7,40\}\)$/\1/p' || true)"
+UPDATE_LINE="$(grep -E '^\[[^]]+\] (no-op|updated|git pull fehlgeschlagen|SKIP)' "${UPDATE_LOG:-/var/log/kiosk-update.log}" 2>/dev/null | tail -n 1 || true)"
+SELFUPDATE=""; SELFUPDATE_AT=null
+case "$UPDATE_LINE" in
+  "") ;;
+  *"] no-op"* | *"] updated"*) SELFUPDATE=ok ;;
+  *) SELFUPDATE=failed ;;
+esac
+if [ -n "$UPDATE_LINE" ]; then
+  SELFUPDATE_AT="$(date -d "$(printf '%s' "$UPDATE_LINE" | sed -n 's/^\[\([^]]*\)\].*/\1/p')" +%s 2>/dev/null || echo null)"
+fi
+
 PAYLOAD="$(jq -n \
   --argjson up "$UP" --arg serial "${CPU_SERIAL:-}" \
   --argjson temp "$TEMP" --argjson load1 "$LOAD1" --argjson cores "$CORES" \
   --argjson mem "$MEMPCT" --argjson disk "$DISKPCT" --arg throttled "$THROTTLED" \
   --arg tv "$TV_POWER" --argjson synced "$CLOCK_SYNCED" --argjson now "$NOW" \
   --arg net "$NET_TYPE" --arg ssid "${WIFI_SSID:0:64}" --argjson dbm "$WIFI_DBM" \
+  --argjson dconn "$DISPLAY_CONNECTED" --arg dmode "${DISPLAY_MODE:0:16}" \
+  --argjson overlay "$OVERLAY" --argjson serr "$STORAGE_ERRORS" \
+  --arg rcommit "$RUNTIME_COMMIT" --arg supd "$SELFUPDATE" --argjson supdat "$SELFUPDATE_AT" \
   '{uptime_seconds:$up, cpu_serial:$serial,
     metrics:({temp:$temp, load1:$load1, cores:$cores,
               mem_used_pct:$mem, disk_used_pct:$disk, throttled:$throttled,
               clock_synced:$synced, time:$now,
+              display_connected:$dconn, overlay_active:$overlay, storage_errors:$serr,
               wifi_signal_dbm:(if $dbm != null and $dbm >= -120 and $dbm <= 0 then $dbm else null end)}
              + (if $tv != "" then {tv_power:$tv} else {} end)
              + (if $net != "" then {net_type:$net} else {} end)
-             + (if $ssid != "" then {wifi_ssid:$ssid} else {} end))}')"
+             + (if $ssid != "" then {wifi_ssid:$ssid} else {} end)
+             + (if $dmode != "" then {display_mode:$dmode} else {} end)
+             + (if $rcommit != "" then {runtime_commit:$rcommit} else {} end)
+             + (if $supd != "" then {selfupdate:$supd, selfupdate_at:$supdat} else {} end))}')"
 
 RESP="$(curl -fsS --max-time 10 \
   -X POST \
@@ -90,9 +133,7 @@ RESP="$(curl -fsS --max-time 10 \
   -d "$PAYLOAD" \
   "${FLEET_HEARTBEAT_URL}/pi/heartbeat" || true)"
 
-# Der Server vergibt die kioskId und liefert sie hier zurueck. In
-# /etc/fleet/kiosk-id ablegen (0644, kiosk.sh liest das als der Pi-User und
-# haengt es an die Kiosk-URL). Nur bei Aenderung schreiben.
+# kiosk.sh reads the id as the Pi user and appends it to the kiosk URL.
 KID="$(printf '%s' "$RESP" | jq -r '.kiosk_id // empty' 2>/dev/null || true)"
 if [ -n "$KID" ]; then
   mkdir -p /etc/fleet
