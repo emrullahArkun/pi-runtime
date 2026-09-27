@@ -47,6 +47,11 @@ if [ -f /etc/systemd/system/big-wifi-setup.service ]; then
   fi
 fi
 
+# Right after boot switch the TV to this HDMI input (if it is on and speaks CEC).
+if [ "$(cut -d. -f1 /proc/uptime)" -lt 300 ] && [ -x /usr/local/sbin/fleet-control ]; then
+  SSH_ORIGINAL_COMMAND=tv-input /usr/local/sbin/fleet-control >/dev/null 2>&1 &
+fi
+
 CHROMIUM_BIN=""
 for candidate in /usr/lib/chromium/chromium /usr/lib/chromium-browser/chromium-browser; do
   if [ -x "$candidate" ]; then CHROMIUM_BIN="$candidate"; break; fi

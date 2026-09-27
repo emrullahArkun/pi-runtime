@@ -16,6 +16,7 @@
 #   screenshot       PNG-Frame des Wayland-Compositors (cage) auf stdout
 #   tv-on            Fernseher per HDMI-CEC einschalten (Image View On)
 #   tv-off           Fernseher per HDMI-CEC in Standby schicken
+#   tv-input         auf den HDMI-Eingang des Pi umschalten, nur wenn der TV schon an ist
 #
 # Alles andere -> exit 1 mit Fehlermeldung.
 # ============================================
@@ -148,6 +149,18 @@ case "$CMD" in
     cec_prepare
     cec_send tv-on --image-view-on
     echo "TV-on (CEC) ueber $CEC_DEV gesendet."
+    exit 0
+    ;;
+  tv-input)
+    # Called by kiosk.sh after boot. Never wakes a TV in standby (the 03:00 reboot runs
+    # at night); without CEC on the TV this is a silent no-op.
+    cec_require tv-input
+    cec_prepare
+    if cec-ctl -d "$CEC_DEV" --to 0 --give-device-power-status 2>/dev/null | grep -q 'pwr-state: on'; then
+      PHYS="$(cec-ctl -d "$CEC_DEV" 2>/dev/null | sed -n 's/.*Physical Address *: *\([0-9a-f.]*\).*/\1/p' | head -1)"
+      cec-ctl -d "$CEC_DEV" --to 15 --active-source "phys-addr=$PHYS" >/dev/null 2>&1 || true
+      echo "TV-Eingang auf $PHYS umgeschaltet."
+    fi
     exit 0
     ;;
   tv-off)
