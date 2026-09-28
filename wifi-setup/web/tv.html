@@ -18,7 +18,7 @@
   .notice .icon { font-size: calc(50 * var(--dp)); }
   .notice .tr { font-weight: 400; opacity: 0.8; }
 
-  .card { position: relative; width: calc(540 * var(--dp)); height: calc(540 * var(--dp)); border-radius: calc(40 * var(--dp)); border: 1px solid var(--outline); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08); background: #ffffff; }
+  .card { position: relative; width: calc(500 * var(--dp)); height: calc(500 * var(--dp)); border-radius: calc(40 * var(--dp)); border: 1px solid var(--outline); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08); background: #ffffff; }
   .face { position: absolute; inset: calc(40 * var(--dp)); display: flex; align-items: center; justify-content: center; opacity: 0; transform: scale(0.94); transition: opacity 0.4s var(--ease), transform 0.4s var(--ease); will-change: opacity, transform; }
   .face.on { opacity: 1; transform: none; }
   .face img { width: 100%; height: 100%; }
@@ -34,12 +34,12 @@
   @keyframes breathe { 0%, 100% { opacity: 0.45; transform: scale(0.94); } 50% { opacity: 1; transform: none; } }
   @keyframes pop { from { opacity: 0; transform: scale(0.5); } 70% { opacity: 1; transform: scale(1.06); } to { transform: none; } }
 
-  .say { margin-top: calc(44 * var(--dp)); text-align: center; transition: opacity 0.25s; }
+  .say { margin-top: calc(40 * var(--dp)); text-align: center; transition: opacity 0.25s; }
   .say.fade { opacity: 0; }
   .say b { display: block; font-size: calc(48 * var(--dp)); font-weight: 700; letter-spacing: -0.01em; }
   .say span { display: block; margin-top: calc(6 * var(--dp)); font-size: calc(30 * var(--dp)); color: var(--text-mid); }
 
-  .steps { display: flex; align-items: center; margin-top: calc(52 * var(--dp)); }
+  .steps { display: flex; align-items: center; margin-top: calc(44 * var(--dp)); }
   .step { display: flex; align-items: center; justify-content: center; width: calc(88 * var(--dp)); height: calc(88 * var(--dp)); border-radius: 50%; background: var(--tonal); color: var(--text-light); font-size: calc(44 * var(--dp)); transition: background 0.5s, color 0.5s, box-shadow 0.5s; }
   .step.active { background: #ffffff; color: var(--primary); box-shadow: inset 0 0 0 calc(3 * var(--dp)) var(--primary); }
   .step.done { background: var(--primary); color: var(--on-primary); }
