@@ -148,24 +148,6 @@ if [ -n "$USER_DATA" ]; then
   REGDOM="cfg80211.ieee80211_regdom=${COUNTRY:-DE}"
   grep -q "$REGDOM" "$MOUNT_DIR/cmdline.txt" || sed -i "1 s/\$/ $REGDOM/" "$MOUNT_DIR/cmdline.txt"
   echo "  user-data (Benutzer, Hostname, SSH-Schluessel) geschrieben."
-  # A fresh card has no wifi-fallback service yet; cloud-init joins the Wi-Fi at first boot.
-  if [ -n "$SSID" ]; then
-    quote() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
-    cat > "$MOUNT_DIR/network-config" << NETCFG
-network:
-  version: 2
-  renderer: NetworkManager
-  wifis:
-    wlan0:
-      dhcp4: true
-      optional: true
-      regulatory-domain: "${COUNTRY:-DE}"
-      access-points:
-        "$(quote "$SSID")":
-          password: "$(quote "$PSK")"
-NETCFG
-    echo "  network-config (WLAN $SSID fuer den ersten Start) geschrieben."
-  fi
 fi
 
 # --- fleet-enrollment.txt ---
@@ -180,8 +162,12 @@ EOF
 chmod 600 "$ENROLL_FILE" 2>/dev/null || true  # FAT32 ignoriert chmod, aber egal
 echo "  $ENROLL_FILE geschrieben."
 
-# --- wifi.conf (optional) ---
-if [ -n "$SSID" ]; then
+# --- Wi-Fi for the first start (optional) ---
+# Marks this Wi-Fi as the one for the first start at home (see wifi-setup/README.md).
+[ -n "$SSID" ] && printf '%s\n' "$SSID" > "$MOUNT_DIR/fleet-setup-wifi"
+# A fresh card gets a NetworkManager profile on the rootfs (below); wifi.conf needs
+# the wifi-fallback service, which only an already set up Pi has.
+if [ -n "$SSID" ] && [ -z "$IMAGE" ]; then
   WIFI_FILE="$MOUNT_DIR/wifi.conf"
   {
     echo "# Auto-generiert von flash.sh am $(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -192,10 +178,6 @@ if [ -n "$SSID" ]; then
   } > "$WIFI_FILE"
   chmod 600 "$WIFI_FILE" 2>/dev/null || true
   echo "  $WIFI_FILE geschrieben (SSID: $SSID)."
-  # Marks this Wi-Fi as the one for the first start at home (see wifi-setup/README.md).
-  printf '%s\n' "$SSID" > "$MOUNT_DIR/fleet-setup-wifi"
-else
-  echo "  wifi.conf: skip (kein --ssid)."
 fi
 
 # --- rootfs: First-Boot-Bootstrap installieren ---
@@ -232,6 +214,23 @@ else
   if [ ! -d "$ROOT_MOUNT_DIR/etc/systemd/system" ] || [ ! -d "$ROOT_MOUNT_DIR/usr/local/sbin" ]; then
     echo "FEHLER: $ROOT_MOUNT_DIR sieht nicht nach Pi-OS rootfs aus (etc/systemd, usr/local/sbin fehlen)."
     exit 1
+  fi
+
+  if [ -n "$SSID" ] && [ -n "$IMAGE" ]; then
+    keyfile_value() { printf '%s' "$1" | sed 's/\\/\\\\/g'; }
+    NM_FILE="$ROOT_MOUNT_DIR/etc/NetworkManager/system-connections/setup-wifi.nmconnection"
+    install -d -m 0755 "$(dirname "$NM_FILE")"
+    {
+      printf '[connection]\nid=setup-wifi\nuuid=%s\ntype=wifi\nautoconnect=true\n\n' "$(cat /proc/sys/kernel/random/uuid)"
+      printf '[wifi]\nmode=infrastructure\nssid=%s\n\n' "$(keyfile_value "$SSID")"
+      if [ -n "$PSK" ]; then
+        printf '[wifi-security]\nkey-mgmt=wpa-psk\npsk=%s\n\n' "$(keyfile_value "$PSK")"
+      fi
+      printf '[ipv4]\nmethod=auto\n\n[ipv6]\nmethod=auto\n'
+    } > "$NM_FILE"
+    chown root:root "$NM_FILE"
+    chmod 600 "$NM_FILE"
+    echo "  WLAN $SSID fuer den ersten Start eingetragen."
   fi
 
   BOOTSTRAP_SCRIPT="$ROOT_MOUNT_DIR/usr/local/sbin/fleet-bootstrap.sh"
