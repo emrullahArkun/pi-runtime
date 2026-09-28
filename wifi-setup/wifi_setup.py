@@ -19,6 +19,7 @@ from pathlib import Path
 
 IFACE = os.environ.get("WIFI_IFACE", "wlan0")
 RUN_DIR = Path(os.environ.get("RUN_DIR", "/run/big-wifi-setup"))
+STATE_DIR = Path(os.environ.get("STATE_DIR", "/var/lib/big-wifi-setup"))
 WEB_DIR = Path(__file__).resolve().with_name("web")
 PORT = int(os.environ.get("PORT", "80"))
 
@@ -37,6 +38,7 @@ SAVED_TRY_AFTER_S = 60
 RETRY_SAVED_S = 300
 PAGE_FALLBACK_S = 15
 CONNECTED_HOLD_S = 5
+AP_CHECK_S = 10
 PASSWORD_CHARS = "abcdefghjkmnpqrstuvwxyz23456789"
 
 
@@ -106,6 +108,22 @@ def wifi_qr_payload(ssid, password):
 
 def new_password(length=10):
     return "".join(secrets.choice(PASSWORD_CHARS) for _ in range(length))
+
+
+def setup_password():
+    """One password per Pi: a phone that saved the setup Wi-Fi keeps working."""
+    path = STATE_DIR / "ap-password"
+    try:
+        saved = path.read_text().strip()
+        if len(saved) >= 8:
+            return saved
+    except OSError:
+        pass
+    password = new_password()
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    path.write_text(password + "\n")
+    path.chmod(0o600)
+    return password
 
 
 def run(args, timeout=60):
@@ -192,6 +210,10 @@ class Network:
     def stop_ap(self):
         run(["nmcli", "connection", "down", "id", AP_CON])
 
+    def ap_up(self):
+        _, out = run(["nmcli", "-t", "-f", "NAME", "connection", "show", "--active"])
+        return AP_CON in [unescape(line) for line in out.splitlines()]
+
     def remove_ap(self):
         run(["nmcli", "connection", "delete", "id", AP_CON])
 
@@ -216,6 +238,7 @@ class Setup:
         self.page_seen = False
         self.phone_since = None
         self.last_retry = clock()
+        self.last_ap_check = clock()
         self.ap = None
         self.done = False
 
@@ -281,6 +304,11 @@ class Setup:
             idle = self.step == "wifi" and not stations
         if idle and self.saved and self.clock() - self.last_retry >= RETRY_SAVED_S:
             self._retry_saved()
+        elif self.clock() - self.last_ap_check >= AP_CHECK_S:
+            self.last_ap_check = self.clock()
+            if not self.net.ap_up():
+                log("the setup Wi-Fi went down, opening it again")
+                self._open_ap()
 
     def _connect(self, network, password):
         self._set("connecting")
@@ -496,7 +524,7 @@ def main():
     notice, saved = decision
     log(f"starting the setup ({notice or 'no saved Wi-Fi'})")
     address = address_file.read_text()
-    ssid, password = f"{AP_PREFIX}-{mac_suffix(address)}", new_password()
+    ssid, password = f"{AP_PREFIX}-{mac_suffix(address)}", setup_password()
     setup = Setup(net, notice=notice, saved=saved)
     write_qr_codes(ssid, password)
     setup.start(ssid, password)

@@ -1,6 +1,6 @@
 [Unit]
 Description=Wi-Fi setup over the TV when the kiosk has no network
-After=NetworkManager.service
+After=NetworkManager.service wifi-fallback.service
 Wants=NetworkManager.service
 
 [Service]
@@ -10,6 +10,8 @@ ExecStart=/usr/bin/python3 /usr/local/lib/big-wifi-setup/wifi_setup.py
 RuntimeDirectory=big-wifi-setup
 RuntimeDirectoryMode=0755
 RuntimeDirectoryPreserve=yes
+StateDirectory=big-wifi-setup
+StateDirectoryMode=0700
 Restart=on-failure
 RestartSec=10
 NoNewPrivileges=true
