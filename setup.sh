@@ -6,14 +6,17 @@
 
 set -e
 
-if [ "$EUID" -eq 0 ]; then
+# --update: the nightly run from kiosk-selfupdate.sh (as root). Installs scripts, services,
+# sudoers and configuration, adds missing packages, but never upgrades (unattended-upgrades
+# does that) and never enrolls.
+UPDATE=0
+[ "${1:-}" = "--update" ] && UPDATE=1
+
+if [ "$EUID" -eq 0 ] && [ "$UPDATE" = "0" ]; then
   echo "FEHLER: Bitte NICHT als root ausfuehren. Lauf als normaler User mit sudo-Rechten."
   exit 1
 fi
 
-USERNAME="$USER"
-USERHOME="$HOME"
-USERUID="$(id -u)"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # Fleet-weite Konvention: der Linux-User muss "gebetszeiten-app" heissen. Die API SSHt
@@ -21,7 +24,16 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # sie ohne pro-Pi-Konfig auskommt. Setup.sh wuerde sonst die SSH-Keys ins
 # falsche Home schreiben und Remote-Control bricht sofort weg.
 EXPECTED_USER="gebetszeiten-app"
-if [ "$USERNAME" != "$EXPECTED_USER" ]; then
+if [ "$EUID" -eq 0 ]; then
+  USERNAME="$EXPECTED_USER"
+  USERHOME="$(getent passwd "$USERNAME" | cut -d: -f6)"
+  USERUID="$(id -u "$USERNAME")"
+else
+  USERNAME="$USER"
+  USERHOME="$HOME"
+  USERUID="$(id -u)"
+fi
+if [ "$USERNAME" != "$EXPECTED_USER" ] || [ -z "$USERHOME" ]; then
   echo "FEHLER: setup.sh laeuft als '$USERNAME', erwartet aber '$EXPECTED_USER'."
   echo ""
   echo "  Im Pi Imager muss als Username '$EXPECTED_USER' eingestellt sein."
@@ -45,11 +57,31 @@ echo "Modell: $PI_MODEL"
 echo "User:   $USERNAME (UID $USERUID)"
 echo "Home:   $USERHOME"
 echo "GPU:    ${GPU_MEM} MB"
+[ "$UPDATE" = "1" ] && echo "Modus:  --update"
 echo ""
 
+# Installs what is missing; never upgrades what is there.
+ensure_packages() {
+  local missing=() pkg
+  for pkg in "$@"; do
+    dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "ok installed" || missing+=("$pkg")
+  done
+  [ "${#missing[@]}" -eq 0 ] && return 0
+  [ "$UPDATE" = "1" ] && sudo apt-get -q -o DPkg::Lock::Timeout=600 update
+  sudo env DEBIAN_FRONTEND=noninteractive apt-get -q -y -o DPkg::Lock::Timeout=600 install "${missing[@]}"
+}
+
+# Files in the kiosk user's home stay theirs when the update runs as root.
+own() {
+  [ "$EUID" -eq 0 ] && chown "$USERNAME:" "$@"
+  return 0
+}
+
 # --- System updaten ---
-echo "[1/8] System updaten..."
-sudo apt update && sudo apt upgrade -y
+if [ "$UPDATE" = "0" ]; then
+  echo "[1/8] System updaten..."
+  sudo apt update && sudo apt upgrade -y
+fi
 
 # --- Kiosk-Pakete installieren ---
 # cage + chromium = primaerer Kiosk (Wayland-Compositor + Browser)
@@ -60,7 +92,7 @@ sudo apt update && sudo apt upgrade -y
 # HINWEIS: NICHT zram-tools installieren - Pi OS Bookworm hat zram via
 # systemd-zram-setup@zram0 bereits eingebaut, zram-tools wuerde konflikten.
 echo "[2/8] Kiosk-Pakete installieren..."
-sudo apt install -y \
+ensure_packages \
   cage \
   chromium \
   cog \
@@ -111,7 +143,7 @@ for script in kiosk.sh kiosk-cog.sh; do
   if [ -f "$SCRIPT_DIR/$script" ] && [ "$SCRIPT_DIR/$script" != "$USERHOME/$script" ]; then
     cp "$SCRIPT_DIR/$script" "$USERHOME/$script"
   fi
-  [ -f "$USERHOME/$script" ] && chmod +x "$USERHOME/$script"
+  [ -f "$USERHOME/$script" ] && chmod +x "$USERHOME/$script" && own "$USERHOME/$script"
 done
 
 # --- Transparentes Cursor-Theme (Mauszeiger im Kiosk verstecken) ---
@@ -195,6 +227,7 @@ if [ -z "$WAYLAND_DISPLAY" ] && [ "$(tty)" = "/dev/tty1" ]; then
 fi
 EOF
 fi
+own "$PROFILE"
 
 # Alte systemd kiosk.service deaktivieren falls vorhanden (Autologin-Weg ist zuverlaessiger)
 sudo systemctl disable kiosk.service 2>/dev/null || true
@@ -224,7 +257,7 @@ fi
 # Ohne WLAN beim Start: eigenes Setup-WLAN, QR-Code auf dem TV, Eingabe am Handy.
 echo "[+] WLAN-Setup ueber den Fernseher installieren..."
 if [ -f "$SCRIPT_DIR/wifi-setup/wifi_setup.py" ]; then
-  sudo apt install -y qrencode dnsmasq-base iw
+  ensure_packages qrencode dnsmasq-base iw
   # Without a Wi-Fi country Raspberry Pi OS keeps the radio blocked (no Wi-Fi in the Imager).
   WIFI_COUNTRY="$(sudo raspi-config nonint get_wifi_country 2>/dev/null || true)"
   if [ -z "$WIFI_COUNTRY" ] || [ "$WIFI_COUNTRY" = "00" ]; then
@@ -261,7 +294,7 @@ sudo chmod 644 /etc/cron.d/kiosk-daily-reboot
 # --- unattended-upgrades fuer Sicherheits-Patches ---
 # Auto-Reboot deaktivieren — der Daily-Cron erledigt das.
 echo "[+] unattended-upgrades..."
-sudo apt install -y unattended-upgrades apt-listchanges
+ensure_packages unattended-upgrades apt-listchanges
 sudo tee /etc/apt/apt.conf.d/52unattended-upgrades-pi.conf > /dev/null << 'EOF'
 // Auto-generiert von setup.sh — eigene Origins-Liste fuer Raspberry Pi OS.
 Unattended-Upgrade::Origins-Pattern {
@@ -279,11 +312,11 @@ APT::Periodic::Update-Package-Lists "1";
 APT::Periodic::Unattended-Upgrade "1";
 EOF
 
-# --- Self-Update via git pull ---
-# /opt/kiosk = Klon des OEFFENTLICHEN Dist-Repos (nur die Pi-Skripte, keine
-# Secrets -> public, kein Deploy-Key noetig). Cron pullt taeglich; kiosk.sh-
-# Aenderungen greifen beim naechsten Reboot. fleet-control + sudoers werden
-# bewusst NICHT auto-applied — operator muss bei Bedarf nochmal `bash setup.sh`.
+# --- Self-Update ---
+# /opt/kiosk = clone of the PUBLIC pi-runtime repo (only the Pi scripts, no secrets).
+# kiosk-selfupdate.sh moves it along the channel in /etc/fleet/channel at 02:00 and runs
+# `setup.sh --update`; the 03:00 reboot then starts the new state. root runs these
+# scripts, so /opt/kiosk belongs to root and the kiosk user cannot change them.
 KIOSK_DIST_REPO="https://github.com/emrullahArkun/pi-runtime.git"
 echo "[+] Self-Update Cron (Dist: $KIOSK_DIST_REPO)..."
 if [ ! -d /opt/kiosk/.git ]; then
@@ -293,17 +326,23 @@ if [ ! -d /opt/kiosk/.git ]; then
 else
   echo "  -> /opt/kiosk existiert bereits — uebernehme."
 fi
+if [ -d /opt/kiosk ]; then
+  sudo chown -R root:root /opt/kiosk
+  sudo chmod -R go-w /opt/kiosk
+fi
+sudo install -d -m 0755 /etc/fleet
+sudo test -f /etc/fleet/channel || echo stable | sudo tee /etc/fleet/channel > /dev/null
 sudo install -m 0755 -o root -g root "$SCRIPT_DIR/kiosk-selfupdate.sh" /usr/local/sbin/kiosk-selfupdate.sh
 sudo tee /etc/cron.d/kiosk-selfupdate > /dev/null << 'EOF'
-# Auto-generiert von setup.sh — taeglicher git pull auf /opt/kiosk.
+# Auto-generiert von setup.sh — naechtliches Update aus pi-runtime, vor dem Reboot um 03:00.
 SHELL=/bin/bash
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
-0 4 * * * root /usr/local/sbin/kiosk-selfupdate.sh
+0 2 * * * root /usr/local/sbin/kiosk-selfupdate.sh
 EOF
 sudo chmod 644 /etc/cron.d/kiosk-selfupdate
 sudo touch /var/log/kiosk-update.log
 sudo chmod 644 /var/log/kiosk-update.log
-echo "  Cron installiert (04:00 daily, log: /var/log/kiosk-update.log)."
+echo "  Cron installiert (02:00 daily, Kanal $(cat /etc/fleet/channel), log: /var/log/kiosk-update.log)."
 
 # --- Fleet-Setup ---
 # Aufgespaltet in vier idempotente Bloecke, damit Re-Run von setup.sh auf einem
@@ -360,7 +399,7 @@ elif [ -z "$CPU_SERIAL" ]; then
 else
   echo "  Pre-Flight: API=$FLEET_API_URL, CPU-Serial=$CPU_SERIAL"
   echo "  -> Pakete sicherstellen (wireguard, jq, curl, iw)..."
-  sudo apt install -y wireguard wireguard-tools jq curl iw
+  ensure_packages wireguard wireguard-tools jq curl iw
   FLEET_ENABLED=1
 fi
 
@@ -368,7 +407,7 @@ fi
 # Greift nur, wenn FLEET_ENABLED + Token vorhanden + wg0.conf noch nicht da.
 # Re-Runs nach erfolgreicher Erstregistrierung uebersprungen — aber Block C+D
 # laufen trotzdem!
-if [ "$FLEET_ENABLED" = "1" ]; then
+if [ "$FLEET_ENABLED" = "1" ] && [ "$UPDATE" = "0" ]; then
   if sudo test -f /etc/wireguard/wg0.conf; then
     echo "  [B] Registrierung uebersprungen (wg0.conf existiert — Pi ist registriert)."
   elif [ -z "${FLEET_ENROLLMENT_TOKEN:-}" ]; then
@@ -555,6 +594,7 @@ EOF
 
     echo "  -> ~/.ssh/authorized_keys mit ForceCommand + (optional) admin-shell..."
     mkdir -p "$USERHOME/.ssh"
+    own "$USERHOME/.ssh"
     chmod 700 "$USERHOME/.ssh"
     AUTH_KEYS="$USERHOME/.ssh/authorized_keys"
     touch "$AUTH_KEYS"
@@ -582,6 +622,7 @@ EOF
     else
       echo "  -> kein admin_shell_pubkey vom Server — Browser-Terminal deaktiviert"
     fi
+    own "$AUTH_KEYS"
 
     # WG-Endpoint mit dem Server-Stand abgleichen (z.B. nach Umstellung roher IP ->
     # Domain). NUR die Datei anfassen, KEIN wg-quick-Restart: ein falscher Endpoint
@@ -589,7 +630,7 @@ EOF
     # Die Aenderung greift beim naechsten Reboot (taeglich 03:00, oder dem reboot am
     # Ende dieses Setups). Bewusst nur hier in Block D (manueller Lauf), NICHT im
     # D2-Timer: Endpoint-Auto-Apply waere als Hintergrund-Job zu gefaehrlich.
-    if [ -n "$SERVER_ENDPOINT_NEW" ]; then
+    if [ -n "$SERVER_ENDPOINT_NEW" ] && [ "$UPDATE" = "0" ]; then
       CUR_ENDPOINT="$(sudo sed -n 's|^Endpoint = ||p' /etc/wireguard/wg0.conf | head -1 || true)"
       if [ -z "$CUR_ENDPOINT" ]; then
         echo "  WARN: kein Endpoint in wg0.conf gefunden — Endpoint-Abgleich uebersprungen."
@@ -670,14 +711,21 @@ if [ -f "$SSH_AUTH_KEYS" ] && grep -qE '^(ssh-(ed25519|rsa)|ecdsa-|command=)' "$
   sudo install -d -m 0755 /etc/ssh/sshd_config.d
   # Prefix 00- => wird zuerst gelesen und gewinnt gegen andere Drop-ins: sshd nimmt
   # fuer die meisten Keywords den ERSTEN Wert (z.B. ein Pi-OS-userconf mit "yes").
-  sudo tee /etc/ssh/sshd_config.d/00-fleet-hardening.conf > /dev/null << 'EOF'
+  SSHD_CONF=/etc/ssh/sshd_config.d/00-fleet-hardening.conf
+  SSHD_TMP="$(mktemp)"
+  cat > "$SSHD_TMP" << 'EOF'
 # Auto-generiert von setup.sh — key-only SSH (Passwort-Brute-Force ueber WLAN dicht).
 PasswordAuthentication no
 KbdInteractiveAuthentication no
 PermitRootLogin no
 EOF
-  sudo chmod 644 /etc/ssh/sshd_config.d/00-fleet-hardening.conf
-  if sudo sshd -t 2>/dev/null; then
+  SSHD_CHANGED=1
+  sudo cmp -s "$SSHD_TMP" "$SSHD_CONF" && SSHD_CHANGED=0
+  sudo install -m 0644 -o root -g root "$SSHD_TMP" "$SSHD_CONF"
+  rm -f "$SSHD_TMP"
+  if [ "$SSHD_CHANGED" = "0" ]; then
+    echo "  -> key-only unveraendert."
+  elif sudo sshd -t 2>/dev/null; then
     sudo systemctl restart ssh 2>/dev/null || sudo systemctl restart sshd 2>/dev/null || true
     echo "  -> Passwort-Login deaktiviert (key-only). Konsolen-Login bleibt Notausgang."
   else

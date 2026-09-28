@@ -89,12 +89,13 @@ if [ -n "$KLOG" ]; then
   STORAGE_ERRORS="$(printf '%s\n' "$KLOG" | grep -c -E 'mmcblk[0-9]+.*error|error.*mmcblk[0-9]|EXT4-fs error' || true)"
 fi
 
-# --- Software: the monorepo commit /opt/kiosk was mirrored from, and how the last nightly
-#     self-update went (its log lines start with "[<UTC time>] ").
+# --- Software: the monorepo commit /opt/kiosk was mirrored from, the update channel, and
+#     how the last nightly self-update went (its log lines start with "[<UTC time>] ").
 KIOSK_DIR="${KIOSK_DIR:-/opt/kiosk}"
 RUNTIME_COMMIT="$(git -c safe.directory="$KIOSK_DIR" -C "$KIOSK_DIR" log -1 --format=%s 2>/dev/null \
   | sed -n 's/^sync from monorepo @ \([0-9a-f]\{7,40\}\)$/\1/p' || true)"
-UPDATE_LINE="$(grep -E '^\[[^]]+\] (no-op|updated|git pull fehlgeschlagen|SKIP)' "${UPDATE_LOG:-/var/log/kiosk-update.log}" 2>/dev/null | tail -n 1 || true)"
+CHANNEL="$(tr -dc 'a-z' 2>/dev/null < "${CHANNEL_FILE:-/etc/fleet/channel}" || true)"
+UPDATE_LINE="$(grep -E '^\[[^]]+\] (no-op|updated|git (pull|fetch) fehlgeschlagen|update fehlgeschlagen|SKIP)' "${UPDATE_LOG:-/var/log/kiosk-update.log}" 2>/dev/null | tail -n 1 || true)"
 SELFUPDATE=""; SELFUPDATE_AT=null
 case "$UPDATE_LINE" in
   "") ;;
@@ -114,6 +115,7 @@ PAYLOAD="$(jq -n \
   --argjson dconn "$DISPLAY_CONNECTED" --arg dmode "${DISPLAY_MODE:0:16}" \
   --argjson overlay "$OVERLAY" --argjson serr "$STORAGE_ERRORS" \
   --arg rcommit "$RUNTIME_COMMIT" --arg supd "$SELFUPDATE" --argjson supdat "$SELFUPDATE_AT" \
+  --arg channel "$CHANNEL" \
   '{uptime_seconds:$up, cpu_serial:$serial,
     metrics:({temp:$temp, load1:$load1, cores:$cores,
               mem_used_pct:$mem, disk_used_pct:$disk, throttled:$throttled,
@@ -125,6 +127,7 @@ PAYLOAD="$(jq -n \
              + (if $ssid != "" then {wifi_ssid:$ssid} else {} end)
              + (if $dmode != "" then {display_mode:$dmode} else {} end)
              + (if $rcommit != "" then {runtime_commit:$rcommit} else {} end)
+             + (if $channel == "early" or $channel == "stable" then {update_channel:$channel} else {} end)
              + (if $supd != "" then {selfupdate:$supd, selfupdate_at:$supdat} else {} end))}')"
 
 RESP="$(curl -fsS --max-time 10 \
