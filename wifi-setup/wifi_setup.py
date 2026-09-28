@@ -7,6 +7,7 @@ to join it and a phone picks the mosque's Wi-Fi on a captive page. kiosk.sh read
 state file to decide whether the TV shows tv.html or the kiosk.
 """
 
+import hashlib
 import json
 import os
 import secrets
@@ -99,8 +100,9 @@ def key_mgmt(security):
     return "wpa-psk"
 
 
-def mac_suffix(address):
-    return "".join(address.strip().split(":")[-2:]).upper()
+def setup_ssid(password):
+    """Phones keep a joined network's password by name; a new password needs a new name."""
+    return f"{AP_PREFIX}-{hashlib.sha256(password.encode()).hexdigest()[:4].upper()}"
 
 
 def wifi_qr_payload(ssid, password):
@@ -534,8 +536,7 @@ def main():
             break
         time.sleep(2)
 
-    address_file = Path(f"/sys/class/net/{IFACE}/address")
-    if not address_file.exists():
+    if not Path(f"/sys/class/net/{IFACE}").exists():
         log(f"no {IFACE}, nothing to set up")
         write_state("online")
         return
@@ -550,8 +551,8 @@ def main():
 
     notice, saved = decision
     log(f"starting the setup ({notice or 'no saved Wi-Fi'})")
-    address = address_file.read_text()
-    ssid, password = f"{AP_PREFIX}-{mac_suffix(address)}", setup_password()
+    password = setup_password()
+    ssid = setup_ssid(password)
     setup = Setup(net, notice=notice, saved=saved, home_wifi=home_wifi)
     write_qr_codes(ssid, password)
     setup.start(ssid, password)
@@ -559,7 +560,7 @@ def main():
     threading.Thread(target=server.serve_forever, daemon=True).start()
 
     # kiosk.sh waits for the first decision; later setups need the TV switched over.
-    was_waiting = saved or time.monotonic() - started > 25
+    was_waiting = saved or time.monotonic() - started > 55
     write_state("setup")
     if was_waiting:
         restart_kiosk()

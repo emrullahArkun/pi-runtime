@@ -35,7 +35,8 @@ fi
 START_URL="$KIOSK_URL"
 if [ -f /etc/systemd/system/big-wifi-setup.service ]; then
   SETUP_STATE=""
-  for _ in $(seq 1 30); do
+  # Up to a minute: without Wi-Fi in reach the service decides within ~45 s.
+  for _ in $(seq 1 60); do
     SETUP_STATE="$(cat /run/big-wifi-setup/state 2>/dev/null || true)"
     [ -n "$SETUP_STATE" ] && [ "$SETUP_STATE" != "checking" ] && break
     sleep 1
