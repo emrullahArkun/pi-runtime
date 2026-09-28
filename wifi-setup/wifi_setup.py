@@ -28,6 +28,10 @@ PORT = int(os.environ.get("PORT", "80"))
 
 AP_CON = "big-setup"
 AP_ADDR = "10.42.0.1"
+# Every name in the setup Wi-Fi resolves here (dnsmasq, see setup.sh). Samsung phones skip
+# the sign-in page when the check hosts resolve to a private address, so it is one from
+# the benchmarking range (RFC 2544, never routed), added to wlan0 next to AP_ADDR.
+PROBE_ADDR = "198.18.0.1"
 AP_PREFIX = "BIG-Setup"
 NEW_CON = "big-wifi-new"
 LOCAL_HOSTS = {AP_ADDR, "127.0.0.1", "localhost"}
@@ -212,9 +216,12 @@ class Network:
         if not ok:
             log(f"hotspot failed: {out}")
         run(["nmcli", "connection", "modify", "id", AP_CON, "connection.autoconnect", "no"])
+        if ok:
+            run(["ip", "address", "replace", f"{PROBE_ADDR}/32", "dev", IFACE])
         return ok
 
     def stop_ap(self):
+        run(["ip", "address", "del", f"{PROBE_ADDR}/32", "dev", IFACE])
         run(["nmcli", "connection", "down", "id", AP_CON])
 
     def ap_up(self):
@@ -227,6 +234,7 @@ class Network:
                 run(["nmcli", "connection", "delete", "id", name])
 
     def remove_ap(self):
+        run(["ip", "address", "del", f"{PROBE_ADDR}/32", "dev", IFACE])
         run(["nmcli", "connection", "delete", "id", AP_CON])
 
     def stations(self):
