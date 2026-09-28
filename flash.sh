@@ -1,30 +1,16 @@
 #!/bin/bash
-# Bereitet eine SD-Karte mit Pi OS Lite fuer Zero-Touch-Boot vor.
+# Prepares an SD card for a fleet Pi. Normally called by provision-pi.sh.
 #
-# Voraussetzung: Pi OS Lite ist BEREITS via Raspberry Pi Imager auf die SD
-# geflasht (mit SSH enabled + Default-User gesetzt). Dieses Skript fuegt nur
-# die Fleet-Onboarding-Dateien zur Boot-Partition hinzu.
-#
-# WICHTIG — Imager-Einstellungen:
-#   - Username:   gebetszeiten-app          (FEST, Fleet-Konvention, siehe api/src/ssh.ts)
-#   - Hostname:   <pro Pi frei>   (z.B. merkez, alperenler — identifiziert den Pi)
-#   - SSH:        Public-Key oder Passwort, beides geht
-#   setup.sh bricht ab, wenn der Username nicht "gebetszeiten-app" ist.
-#
-# Was passiert:
-#   1) Boot-Partition (FAT32, "bootfs") finden + mounten
-#   2) fleet-enrollment.txt mit Token + API-URL + Kiosk-URL ablegen
-#   3) (optional) wifi.conf mit SSID/PSK/Country ablegen
-#   4) Sauber unmounten
+# With --image the card is written from scratch (Raspberry Pi OS .img.xz) and
+# --user-data becomes the cloud-init user-data (user, hostname, SSH key), like the
+# Raspberry Pi Imager does. Without --image the card must already be flashed.
+# Then it adds the fleet enrollment, an optional wifi.conf and the first-boot
+# bootstrap (git, pi-runtime, setup.sh).
 #
 # Usage:
-#   sudo ./flash.sh --device /dev/sdX --token TOKEN \
-#                   --api https://<deine-api> --kiosk-url https://<deine-kiosk-app>
-#   (optional zusaetzlich: --ssid MeinWLAN --psk passwort123 --country DE)
-#
-# Tipps:
-#   - Device finden: `lsblk` (z.B. /dev/sdX, NICHT /dev/sdX1)
-#   - Token erzeugen: `sudo fleet manage-pis add <name>` auf dem VPS
+#   sudo ./flash.sh --device /dev/sdX --token TOKEN --api URL --kiosk-url URL \
+#                   [--image os.img.xz --user-data user-data] [--country DE] \
+#                   [--ssid MeinWLAN --psk passwort123]
 
 set -euo pipefail
 
@@ -35,6 +21,8 @@ KIOSK_BASE_URL=""
 SSID=""
 PSK=""
 COUNTRY=""
+IMAGE=""
+USER_DATA=""
 
 usage() {
   sed -n '2,/^set -euo pipefail/p' "$0" | head -n -1 | sed 's/^# \?//'
@@ -50,6 +38,8 @@ while [ $# -gt 0 ]; do
     --ssid)    SSID="$2"; shift 2 ;;
     --psk)     PSK="$2"; shift 2 ;;
     --country) COUNTRY="$2"; shift 2 ;;
+    --image)     IMAGE="$2"; shift 2 ;;
+    --user-data) USER_DATA="$2"; shift 2 ;;
     -h|--help) usage ;;
     *)         echo "Unbekanntes Argument: $1"; usage ;;
   esac
@@ -78,6 +68,28 @@ if [ "$DEV_TYPE" = "part" ]; then
   echo "FEHLER: $DEVICE ist eine Partition. Bitte das Root-Device angeben"
   echo "       (z.B. /dev/sdb statt /dev/sdb1, oder /dev/mmcblk0 statt /dev/mmcblk0p1)."
   exit 1
+fi
+
+# --- Write the OS image (optional) ---
+if [ -n "$IMAGE" ]; then
+  [ -f "$IMAGE" ] || { echo "FEHLER: Abbild $IMAGE fehlt."; exit 1; }
+  if lsblk -nro MOUNTPOINTS "$DEVICE" | grep -qxE '/|/boot|/boot/efi|/home'; then
+    echo "FEHLER: $DEVICE ist ein Systemlaufwerk dieses Rechners."
+    exit 1
+  fi
+  for part in $(lsblk -nrpo NAME "$DEVICE" | tail -n +2); do
+    umount "$part" 2>/dev/null || true
+  done
+  echo "Schreibe $(basename "$IMAGE") auf $DEVICE ..."
+  xzcat "$IMAGE" | dd of="$DEVICE" bs=4M oflag=direct conv=fsync status=progress
+  sync
+  partprobe "$DEVICE" 2>/dev/null || blockdev --rereadpt "$DEVICE" || true
+  udevadm settle 2>/dev/null || true
+  for _ in $(seq 1 20); do
+    [ -b "${DEVICE}1" ] || [ -b "${DEVICE}p1" ] && break
+    sleep 0.5
+  done
+  echo "  Abbild geschrieben."
 fi
 
 # Boot-Partition finden — bei Pi OS Lite immer erste Partition, FAT32, Label "bootfs".
@@ -128,6 +140,14 @@ trap cleanup EXIT
 if [ ! -f "$MOUNT_DIR/cmdline.txt" ] && [ ! -f "$MOUNT_DIR/config.txt" ]; then
   echo "FEHLER: $MOUNT_DIR sieht nicht nach Pi-Boot-Partition aus (cmdline.txt/config.txt fehlen)."
   exit 1
+fi
+
+# --- cloud-init user-data (only with a freshly written image) ---
+if [ -n "$USER_DATA" ]; then
+  cp "$USER_DATA" "$MOUNT_DIR/user-data"
+  REGDOM="cfg80211.ieee80211_regdom=${COUNTRY:-DE}"
+  grep -q "$REGDOM" "$MOUNT_DIR/cmdline.txt" || sed -i "1 s/\$/ $REGDOM/" "$MOUNT_DIR/cmdline.txt"
+  echo "  user-data (Benutzer, Hostname, SSH-Schluessel) geschrieben."
 fi
 
 # --- fleet-enrollment.txt ---

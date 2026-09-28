@@ -1,68 +1,40 @@
 #!/bin/bash
-# provision-pi.sh — One-Command-Provisioning fuer einen Fleet-Pi.
+# provision-pi.sh — one command from an empty SD card to a fleet Pi.
 #
-# Schachtelt die zwei bestehenden Schritte zu einem Aufruf:
-#   1) Token am VPS erzeugen   (ssh <vps> 'sudo fleet manage-pis add <name>')
-#   2) SD praeparieren         (sudo ./flash.sh --token <token> ...)
-# Der Token wird automatisch aus der manage-pis-Ausgabe gegriffen und
-# durchgereicht — kein Copy-Paste mehr.
-#
-# Voraussetzung: Pi OS Lite ist via Raspberry Pi Imager auf die SD geflasht,
-# inkl. Username (FEST: gebetszeiten-app), Hostname, WLAN und SSH. Dieses Skript
-# fuegt nur das Fleet-Onboarding + den First-Boot-Bootstrap hinzu (via flash.sh).
-#
-# Konstanten (VPS-Alias, API-URL, Kiosk-URL) haben sinnvolle Defaults im Skript
-# (VPS=hetzner + Prod-URLs). Eine fleet.conf ist nur noetig, wenn du die
-# ueberschreiben willst:  cp fleet.conf.example fleet.conf
+# Asks for what it needs (name, device password, optionally the Wi-Fi for the first
+# start), downloads and verifies Raspberry Pi OS Lite (64-bit), creates the Pi's slot
+# on the server and writes everything to the card: OS, cloud-init user-data (user
+# gebetszeiten-app, hostname, your SSH key) and the fleet enrollment.
+# No Raspberry Pi Imager needed.
 #
 # Usage:
-#   ./provision-pi.sh --name merkez [--device /dev/sdX]
-#   --device ist optional: fehlt es, wird die frisch geflashte Pi-SD automatisch
-#   erkannt und vor dem Schreiben zur Bestaetigung gezeigt.
-#   (optional, falls WLAN NICHT schon im Imager gesetzt: --ssid WLAN --psk pw)
+#   ./provision-pi.sh [--name merkez] [--device /dev/sdX] [--ssh-key ~/.ssh/id_ed25519.pub]
+#                     [--ssid WLAN --psk pw] [--image os.img.xz] [--no-os]
+#   --no-os   the card was already flashed with the Imager (old way): only adds the
+#             enrollment and the first-boot bootstrap.
 #
-# NICHT mit sudo starten — die VPS-SSH-Verbindung braucht deinen User-SSH-Key.
-# Das Skript ruft sudo selbst nur fuer flash.sh (mounten) auf.
-#
-# Tipps:
-#   - --name ist das Label in der Fleet-DB; pro Pi eindeutig, idealerweise gleich
-#     dem im Imager gesetzten Hostnamen.
-#   - Device manuell finden:  lsblk   (Root-Device, z.B. /dev/sdb — NICHT sdb1)
+# Run WITHOUT sudo (the server connection uses your SSH key); the script calls sudo
+# itself for writing the card.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONF="$SCRIPT_DIR/fleet.conf"
+PI_USER="gebetszeiten-app"
+OS_URL="https://downloads.raspberrypi.com/raspios_lite_arm64_latest"
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/big-kiosk"
 
 NAME=""
 DEVICE=""
 SSID=""
 PSK=""
+SSH_KEY="$HOME/.ssh/id_ed25519.pub"
+IMAGE=""
+WRITE_OS=1
 
 usage() {
   sed -n '2,/^set -euo pipefail/p' "$0" | head -n -1 | sed 's/^# \?//'
   exit 1
-}
-
-# Erkennt die frisch geflashte Pi-SD ueber das vfat-Boot-Partition-Label
-# ("bootfs" bei Pi OS Bookworm, "boot" bei aelteren). Funktioniert auch wenn die
-# Karte NICHT gemountet ist (das Label ist via lsblk immer sichtbar). Gibt das
-# Eltern-Block-Device zurueck — nur, wenn GENAU EINES eindeutig gefunden wird.
-detect_pi_sd() {
-  local found="" line PKNAME LABEL FSTYPE
-  while IFS= read -r line; do
-    # lsblk -P liefert shell-quotetes KEY="VALUE" ... -> eval-safe.
-    PKNAME=""; LABEL=""; FSTYPE=""
-    eval "$line"
-    [ -n "$PKNAME" ] && [ "$FSTYPE" = "vfat" ] || continue
-    [ "$LABEL" = "bootfs" ] || [ "$LABEL" = "boot" ] || continue
-    found="$found /dev/$PKNAME"
-  done < <(lsblk -Pno PKNAME,LABEL,FSTYPE 2>/dev/null)
-
-  found="$(printf '%s\n' $found | sed '/^$/d' | sort -u)"
-  [ -n "$found" ] || return 1
-  [ "$(printf '%s\n' "$found" | grep -c .)" = "1" ] || return 1
-  printf '%s\n' "$found"
 }
 
 while [ $# -gt 0 ]; do
@@ -71,128 +43,216 @@ while [ $# -gt 0 ]; do
     --device)  DEVICE="$2"; shift 2 ;;
     --ssid)    SSID="$2"; shift 2 ;;
     --psk)     PSK="$2"; shift 2 ;;
+    --ssh-key) SSH_KEY="$2"; shift 2 ;;
+    --image)   IMAGE="$2"; shift 2 ;;
+    --no-os)   WRITE_OS=0; shift ;;
     --config)  CONF="$2"; shift 2 ;;
     -h|--help) usage ;;
     *)         echo "Unbekanntes Argument: $1"; usage ;;
   esac
 done
 
-if [ -z "$NAME" ]; then
-  echo "FEHLER: --name ist Pflicht."
-  usage
-fi
-
-# Nicht als root — sonst nutzt `ssh` den root-SSH-Key statt deinem.
 if [ "$EUID" -eq 0 ]; then
-  echo "FEHLER: NICHT mit sudo starten."
-  echo "       Die VPS-Verbindung laeuft ueber deinen User-SSH-Key; flash.sh"
-  echo "       ruft das Skript selbst per sudo auf."
+  echo "FEHLER: NICHT mit sudo starten, das Skript fragt selbst nach sudo."
   exit 1
 fi
 
-# --- Defaults (gelten ohne fleet.conf) ---
 VPS_ALIAS="hetzner"
 FLEET_API_URL="https://bigfleet.ipv64.net"
 KIOSK_BASE_URL="https://big-gebetszeiten.vercel.app"
 COUNTRY="DE"
 DEFAULT_SSID=""
 DEFAULT_PSK=""
-
-# --- fleet.conf laden (optional) ---
-# Nur noetig, wenn du obige Defaults ueberschreiben willst (anderer VPS-Alias,
-# andere URLs, WLAN-Default). Fehlt die Datei, gelten die Defaults.
 if [ -f "$CONF" ]; then
   # shellcheck disable=SC1090
   . "$CONF"
 fi
-
-# WLAN: CLI-Arg schlaegt fleet.conf/Default; leer = Imager hat WLAN gesetzt.
 SSID="${SSID:-${DEFAULT_SSID:-}}"
 PSK="${PSK:-${DEFAULT_PSK:-}}"
 
-# flash.sh muss daneben liegen.
-if [ ! -f "$SCRIPT_DIR/flash.sh" ]; then
-  echo "FEHLER: flash.sh nicht in $SCRIPT_DIR gefunden."
+ask() { local reply; read -r -p "$1" reply; printf '%s' "$reply"; }
+confirm() { case "$(ask "$1 [y/N] ")" in y|Y|yes|j|J|ja) return 0 ;; *) return 1 ;; esac; }
+
+# Removable disks and SD slots, never the disk this computer runs from.
+candidate_devices() {
+  local system
+  system="$(lsblk -nrpo PKNAME "$(findmnt -n -o SOURCE /)" 2>/dev/null | head -1)"
+  lsblk -dnrpo NAME,TYPE,RM,TRAN | while read -r name type rm tran; do
+    [ "$type" = "disk" ] && [ "$name" != "$system" ] || continue
+    case "$name" in /dev/mmcblk*) echo "$name"; continue ;; esac
+    { [ "$rm" = "1" ] || [ "$tran" = "usb" ]; } && echo "$name"
+  done
+}
+
+describe() { lsblk -dno SIZE,MODEL "$1" | sed 's/  */ /g'; }
+
+# --- Name ---
+while ! printf '%s' "$NAME" | grep -qE '^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$'; do
+  [ -n "$NAME" ] && echo "  Nur Kleinbuchstaben, Zahlen und Bindestriche."
+  NAME="$(ask "Name der Anzeige (z. B. merkez-2): ")"
+done
+
+# --- SD card ---
+if [ -z "$DEVICE" ]; then
+  mapfile -t CANDIDATES < <(candidate_devices)
+  if [ "${#CANDIDATES[@]}" -eq 1 ]; then
+    DEVICE="${CANDIDATES[0]}"
+  else
+    echo "SD-Karte waehlen:"
+    for dev in "${CANDIDATES[@]}"; do echo "  $dev  ($(describe "$dev"))"; done
+    DEVICE="$(ask "Geraet (z. B. /dev/mmcblk0): ")"
+  fi
+fi
+if [ ! -b "$DEVICE" ] || [ "$(lsblk -dno TYPE "$DEVICE")" != "disk" ]; then
+  echo "FEHLER: $DEVICE ist keine Karte ('lsblk' zeigt die Laufwerke)."
   exit 1
 fi
 
-# --- Device aufloesen: explizit via --device, sonst Pi-SD auto-erkennen ---
-if [ -z "$DEVICE" ]; then
-  if DEVICE="$(detect_pi_sd)"; then
-    echo "  Auto-erkannte Pi-SD: $DEVICE"
-  else
-    echo "FEHLER: keine frisch geflashte Pi-SD eindeutig erkannt (0 oder mehrere"
-    echo "       Kandidaten). Device explizit angeben:  --device /dev/sdX"
-    echo "       ('lsblk' zeigt die Karte; Root-Device, nicht die Partition)."
+# --- Device password and SSH key (only when writing the OS) ---
+USER_DATA=""
+cleanup() { [ -n "$USER_DATA" ] && rm -f "$USER_DATA"; return 0; }
+trap cleanup EXIT
+
+if [ "$WRITE_OS" = "1" ]; then
+  if [ ! -f "$SSH_KEY" ] || ! grep -qE '^(ssh-(ed25519|rsa)|ecdsa-)' "$SSH_KEY"; then
+    echo "FEHLER: $SSH_KEY ist kein oeffentlicher SSH-Schluessel (.pub)."
     exit 1
+  fi
+  echo "Geraetepasswort fuer '$PI_USER' (fuer sudo im Panel-Terminal; am besten aus dem Passwort-Manager):"
+  while :; do
+    read -r -s -p "  Passwort: " PW; echo
+    read -r -s -p "  Nochmal:  " PW2; echo
+    if [ "${#PW}" -lt 12 ]; then echo "  Mindestens 12 Zeichen."; continue; fi
+    [ "$PW" = "$PW2" ] && break
+    echo "  Stimmt nicht ueberein."
+  done
+  PW_HASH="$(openssl passwd -6 -stdin <<< "$PW")"
+  unset PW PW2
+fi
+
+# --- Wi-Fi for the first start (optional) ---
+if [ -z "$SSID" ]; then
+  SSID="$(ask "WLAN fuer den ersten Start zu Hause (leer lassen bei LAN-Kabel): ")"
+  if [ -n "$SSID" ] && [ -z "$PSK" ]; then
+    read -r -s -p "  WLAN-Passwort: " PSK; echo
   fi
 fi
 
-# Device-Sanity (flash.sh prueft danach nochmal hart).
-if [ ! -b "$DEVICE" ]; then
-  echo "FEHLER: $DEVICE ist kein Block-Device. 'lsblk' zeigt die SD-Karte."
-  exit 1
-fi
-
-echo "=== Provisioning ==="
-echo "  Pi-Name (DB):  $NAME"
-echo "  SD-Device:     $DEVICE"
-echo "  VPS:           $VPS_ALIAS"
-echo "  API:           $FLEET_API_URL"
-echo "  Kiosk-URL:     $KIOSK_BASE_URL"
-if [ -n "$SSID" ]; then
-  echo "  WLAN:          $SSID (country=$COUNTRY)"
+# --- Summary ---
+echo
+echo "=== Zusammenfassung ==="
+echo "  Name:        $NAME"
+echo "  SD-Karte:    $DEVICE ($(describe "$DEVICE"))"
+if [ "$WRITE_OS" = "1" ]; then
+  echo "  System:      Raspberry Pi OS Lite 64-bit, wird frisch geschrieben"
+  echo "  Benutzer:    $PI_USER, SSH-Schluessel $(awk '{print $NF}' "$SSH_KEY")"
 else
-  echo "  WLAN:          (vom Imager gesetzt — flash.sh schreibt keine wifi.conf)"
+  echo "  System:      schon vom Imager geschrieben (--no-os)"
 fi
+echo "  WLAN:        ${SSID:-keins, erster Start per LAN-Kabel}"
+echo "  Server:      $VPS_ALIAS"
 echo
-read -r -p "Passt das? Die SD-Karte wird beschrieben. [y/N] " ok
-case "$ok" in
-  y|Y|yes|j|J) ;;
-  *) echo "Abgebrochen."; exit 1 ;;
-esac
+if [ "$WRITE_OS" = "1" ]; then
+  echo "ACHTUNG: Alles auf $DEVICE wird geloescht."
+fi
+confirm "Weiter?" || { echo "Abgebrochen."; exit 1; }
 
-# ─── 1) Token am VPS erzeugen ─────────────────────────────────────────
+# --- OS image ---
+if [ "$WRITE_OS" = "1" ] && [ -z "$IMAGE" ]; then
+  mkdir -p "$CACHE_DIR"
+  echo
+  echo "[1/4] Raspberry Pi OS pruefen..."
+  URL="$(curl -fsIL -o /dev/null -w '%{url_effective}' "$OS_URL")"
+  IMAGE="$CACHE_DIR/$(basename "$URL")"
+  curl -fsL "$URL.sha256" -o "$IMAGE.sha256"
+  if ! (cd "$CACHE_DIR" && sha256sum -c --quiet "$(basename "$IMAGE").sha256" 2>/dev/null); then
+    echo "  Lade $(basename "$URL") ..."
+    curl -fL --progress-bar "$URL" -o "$IMAGE"
+    (cd "$CACHE_DIR" && sha256sum -c --quiet "$(basename "$IMAGE").sha256") \
+      || { echo "FEHLER: Pruefsumme stimmt nicht, Download kaputt."; rm -f "$IMAGE"; exit 1; }
+  fi
+  echo "  $(basename "$IMAGE") ist geprueft."
+fi
+
+if [ "$WRITE_OS" = "1" ]; then
+  USER_DATA="$(mktemp)"
+  chmod 600 "$USER_DATA"
+  cat > "$USER_DATA" << EOF
+#cloud-config
+# Written by provision-pi.sh, like the Raspberry Pi Imager does.
+manage_resolv_conf: false
+hostname: $NAME
+manage_etc_hosts: true
+packages:
+- avahi-daemon
+apt:
+  preserve_sources_list: true
+  conf: |
+    Acquire {
+      Check-Date "false";
+    };
+timezone: Europe/Berlin
+keyboard:
+  model: pc105
+  layout: "de"
+user:
+  name: $PI_USER
+  shell: /bin/bash
+  lock_passwd: false
+  passwd: "$PW_HASH"
+  ssh_authorized_keys:
+    - "$(head -1 "$SSH_KEY")"
+  sudo: null
+ssh_pwauth: false
+runcmd:
+  - [ systemctl, enable, --now, ssh ]
+  - [ rfkill, unblock, wifi ]
+  - [ sh, -c, "for f in /var/lib/systemd/rfkill/*:wlan; do echo 0 > \\"\$f\\"; done" ]
+EOF
+fi
+
+# --- Slot on the server ---
 echo
-echo "[1/2] Token am VPS erzeugen (manage-pis add \"$NAME\")..."
-# `fleet manage-pis` runs inside the fleet-api container, against the live database.
-REMOTE_CMD="sudo fleet manage-pis add \"$NAME\""
-if ! ADD_OUT="$(ssh "$VPS_ALIAS" "$REMOTE_CMD")"; then
-  echo "FEHLER: manage-pis add auf dem VPS fehlgeschlagen."
+echo "[2/4] Platz auf dem Server anlegen..."
+EXISTING="$(ssh "$VPS_ALIAS" "sudo fleet manage-pis list" | awk -v name="$NAME" '
+  { sub(/^#/, ""); n = ""; for (i = 4; i <= NF && $i !~ /^serial=/; i++) n = n (n ? " " : "") $i; if (n == name) print $1 }')"
+for id in $EXISTING; do
+  echo "  Es gibt schon einen Pi '$NAME' (#$id). Derselbe Pi kann sich sonst nicht neu anmelden."
+  if confirm "  Alten Platz #$id loeschen?"; then
+    ssh "$VPS_ALIAS" "sudo fleet manage-pis remove $id"
+  else
+    echo "Abgebrochen."; exit 1
+  fi
+done
+ADD_OUT="$(ssh "$VPS_ALIAS" "sudo fleet manage-pis add \"$NAME\"")"
+TOKEN="$(printf '%s\n' "$ADD_OUT" | awk '/enrollment_token:/ {print $2; exit}' | tr -d '[:space:]')"
+if [ -z "$TOKEN" ]; then
+  echo "FEHLER: kein Anmelde-Token vom Server bekommen:"
   printf '%s\n' "$ADD_OUT"
   exit 1
 fi
-printf '%s\n' "$ADD_OUT"
+printf '%s\n' "$ADD_OUT" | grep -E "created|wg_ip" || true
 
-TOKEN="$(printf '%s\n' "$ADD_OUT" | awk '/enrollment_token:/ {print $2; exit}' | tr -d '[:space:]')"
-if [ -z "$TOKEN" ]; then
-  echo "FEHLER: Konnte enrollment_token nicht aus der Ausgabe lesen."
-  echo "       Pruefe die Ausgabe von: ssh $VPS_ALIAS 'sudo fleet manage-pis add <name>'"
-  exit 1
-fi
-echo "  -> Token erhalten (${#TOKEN} Zeichen)."
-
-# ─── 2) SD praeparieren (flash.sh, braucht sudo zum Mounten) ──────────
+# --- Write the card ---
 echo
-echo "[2/2] SD praeparieren via flash.sh (sudo)..."
-FLASH_ARGS=(
-  --device "$DEVICE"
-  --token "$TOKEN"
-  --api "$FLEET_API_URL"
-  --kiosk-url "$KIOSK_BASE_URL"
-)
+echo "[3/4] SD-Karte beschreiben (sudo)..."
+FLASH_ARGS=(--device "$DEVICE" --token "$TOKEN" --api "$FLEET_API_URL" --kiosk-url "$KIOSK_BASE_URL" --country "$COUNTRY")
+[ "$WRITE_OS" = "1" ] && FLASH_ARGS+=(--image "$IMAGE" --user-data "$USER_DATA")
 if [ -n "$SSID" ]; then
-  FLASH_ARGS+=( --ssid "$SSID" --country "$COUNTRY" )
-  [ -n "$PSK" ] && FLASH_ARGS+=( --psk "$PSK" )
+  FLASH_ARGS+=(--ssid "$SSID")
+  [ -n "$PSK" ] && FLASH_ARGS+=(--psk "$PSK")
 fi
 sudo bash "$SCRIPT_DIR/flash.sh" "${FLASH_ARGS[@]}"
 
 echo
-echo "=== Fertig ==="
-echo "SD-Karte sauber auswerfen, in Pi '$NAME' stecken, Strom dran."
-echo "Der Pi bootet, zieht pi-runtime, laeuft setup.sh selbst und landet im Kiosk"
-echo "(First-Boot dauert real ~5-15min wegen apt + Paketen)."
-echo
-echo "Status checken:"
-echo "  ssh $VPS_ALIAS 'sudo fleet manage-pis list'"
-echo "  oder im Admin-Panel (#admin)."
+echo "[4/4] Fertig."
+sync
+for part in $(lsblk -nrpo NAME "$DEVICE" | tail -n +2); do
+  udisksctl unmount -b "$part" >/dev/null 2>&1 || true
+done
+if [ -n "$SSID" ]; then
+  echo "Karte herausnehmen, in den Pi '$NAME' stecken, Strom an."
+else
+  echo "Karte herausnehmen, in den Pi '$NAME' stecken, LAN-Kabel an, Strom an."
+fi
+echo "Der erste Start dauert 5-15 min. Danach:  ssh $VPS_ALIAS 'sudo fleet manage-pis list'"
