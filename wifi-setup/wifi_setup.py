@@ -272,6 +272,7 @@ class Setup:
         stations = self.net.stations()
         with self.lock:
             if self.step == "wifi" and stations:
+                log(f"phone joined the setup Wi-Fi ({stations})")
                 self.step = "phone"
                 self.phone_since = self.clock()
             elif self.step == "phone" and not stations:
@@ -325,6 +326,8 @@ class Setup:
 
 
 def make_handler(setup):
+    seen = set()
+
     class Handler(BaseHTTPRequestHandler):
         server_version = "big-setup"
 
@@ -358,6 +361,13 @@ def make_handler(setup):
             cache = "max-age=86400" if path.suffix in (".woff2", ".png") else "no-store"
             self._send(200, body, TYPES.get(path.suffix, "application/octet-stream"), cache)
 
+        def _note(self, what):
+            # Diagnosis: which checks a phone sends and whether it loads the page.
+            key = (self.client_address[0], what)
+            if key not in seen:
+                seen.add(key)
+                log(f"{self.client_address[0]} {what}")
+
         def _captive(self):
             # Phones check for internet with their own hosts; answering those with the
             # setup page makes them open it as a sign-in page.
@@ -365,10 +375,12 @@ def make_handler(setup):
 
         def do_GET(self):
             if self._host() not in LOCAL_HOSTS:
+                self._note(f"probe {self._host()}{self.path.split('?', 1)[0]}")
                 return self._captive()
             path = self.path.split("?", 1)[0]
             if path in ("/", "/phone.html"):
                 if self._from_phone():
+                    self._note("loaded the setup page")
                     setup.mark_page_seen()
                 return self._file(WEB_DIR / "phone.html")
             if path == "/api/state":

@@ -75,7 +75,7 @@
 <template id="password-tpl">
   <div class="field">
     <input type="password" name="password" autocomplete="off" autocapitalize="none" spellcheck="false" data-t-placeholder="password">
-    <button class="peek" type="button" data-t-label="show">
+    <button class="peek" type="button" tabindex="-1" data-t-label="show">
       <svg class="icon" viewBox="0 0 24 24"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-8a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"/></svg>
     </button>
   </div>
@@ -138,7 +138,13 @@
     translate(form);
 
     const input = form.querySelector("input");
-    form.querySelector(".peek")?.addEventListener("click", () => { input.type = input.type === "password" ? "text" : "password"; });
+    const peek = form.querySelector(".peek");
+    // Keeps the focus (and so the phone's keyboard) in the password field.
+    peek?.addEventListener("mousedown", (e) => e.preventDefault());
+    peek?.addEventListener("click", () => {
+      input.type = input.type === "password" ? "text" : "password";
+      input.focus();
+    });
     input?.addEventListener("input", () => { form.querySelector(".hint").hidden = true; });
     row.addEventListener("click", () => toggle(item, row, form, input));
     form.addEventListener("submit", (e) => send(e, net.ssid, input, form));

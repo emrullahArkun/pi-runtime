@@ -236,7 +236,7 @@ if [ -f "$SCRIPT_DIR/wifi-setup/wifi_setup.py" ]; then
   sudo install -m 0644 -o root -g root "$SCRIPT_DIR/wifi-setup/wifi-setup.service" /etc/systemd/system/big-wifi-setup.service
   # Every name resolves to the Pi while the setup Wi-Fi runs, so phones open the setup page.
   sudo install -d -m 0755 /etc/NetworkManager/dnsmasq-shared.d
-  echo "address=/#/10.42.0.1" | sudo tee /etc/NetworkManager/dnsmasq-shared.d/big-setup.conf > /dev/null
+  printf 'address=/#/10.42.0.1\nlog-queries\n' | sudo tee /etc/NetworkManager/dnsmasq-shared.d/big-setup.conf > /dev/null
   sudo systemctl daemon-reload
   sudo systemctl enable big-wifi-setup.service
   echo "  big-wifi-setup.service enabled (greift beim naechsten Start)."
