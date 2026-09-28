@@ -148,6 +148,24 @@ if [ -n "$USER_DATA" ]; then
   REGDOM="cfg80211.ieee80211_regdom=${COUNTRY:-DE}"
   grep -q "$REGDOM" "$MOUNT_DIR/cmdline.txt" || sed -i "1 s/\$/ $REGDOM/" "$MOUNT_DIR/cmdline.txt"
   echo "  user-data (Benutzer, Hostname, SSH-Schluessel) geschrieben."
+  # A fresh card has no wifi-fallback service yet; cloud-init joins the Wi-Fi at first boot.
+  if [ -n "$SSID" ]; then
+    quote() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+    cat > "$MOUNT_DIR/network-config" << NETCFG
+network:
+  version: 2
+  renderer: NetworkManager
+  wifis:
+    wlan0:
+      dhcp4: true
+      optional: true
+      regulatory-domain: "${COUNTRY:-DE}"
+      access-points:
+        "$(quote "$SSID")":
+          password: "$(quote "$PSK")"
+NETCFG
+    echo "  network-config (WLAN $SSID fuer den ersten Start) geschrieben."
+  fi
 fi
 
 # --- fleet-enrollment.txt ---
