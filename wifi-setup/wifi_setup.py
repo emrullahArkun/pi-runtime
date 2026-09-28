@@ -20,6 +20,8 @@ from pathlib import Path
 IFACE = os.environ.get("WIFI_IFACE", "wlan0")
 RUN_DIR = Path(os.environ.get("RUN_DIR", "/run/big-wifi-setup"))
 STATE_DIR = Path(os.environ.get("STATE_DIR", "/var/lib/big-wifi-setup"))
+# Written by provision-pi.sh: the Wi-Fi given for the first start at home.
+HOME_WIFI_FILE = Path(os.environ.get("HOME_WIFI_FILE", "/boot/firmware/fleet-setup-wifi"))
 WEB_DIR = Path(__file__).resolve().with_name("web")
 PORT = int(os.environ.get("PORT", "80"))
 
@@ -33,6 +35,7 @@ TYPES = {".html": "text/html; charset=utf-8", ".css": "text/css", ".svg": "image
          ".woff2": "font/woff2", ".png": "image/png"}
 
 LAN_GRACE_S = 15
+HOME_WIFI_GRACE_S = 45
 SAVED_WAIT_S = 600
 SAVED_TRY_AFTER_S = 60
 RETRY_SAVED_S = 300
@@ -214,6 +217,11 @@ class Network:
         _, out = run(["nmcli", "-t", "-f", "NAME", "connection", "show", "--active"])
         return AP_CON in [unescape(line) for line in out.splitlines()]
 
+    def forget(self, ssids):
+        for name, ssid in self.saved_wifi():
+            if ssid in ssids:
+                run(["nmcli", "connection", "delete", "id", name])
+
     def remove_ap(self):
         run(["nmcli", "connection", "delete", "id", AP_CON])
 
@@ -225,8 +233,9 @@ class Network:
 class Setup:
     """The setup session: what the TV shows and what the phone asked for."""
 
-    def __init__(self, net, notice=None, saved=(), clock=time.monotonic, sleep=time.sleep):
+    def __init__(self, net, notice=None, saved=(), home_wifi=(), clock=time.monotonic, sleep=time.sleep):
         self.net = net
+        self.home_wifi = set(home_wifi)
         self.clock = clock
         self.sleep = sleep
         self.lock = threading.Lock()
@@ -322,6 +331,8 @@ class Setup:
                 self.networks = fresh
         log(f"joining {network['ssid']!r}: {'ok' if ok else reason}")
         if ok:
+            if self.home_wifi:
+                self.net.forget(self.home_wifi - {network["ssid"]})
             self._finish()
             return
         self._open_ap()
@@ -469,13 +480,25 @@ def restart_wireguard(only_if_failed):
     run(["systemctl", "restart", "wg-quick@wg0"])
 
 
-def wait_for_network(net, clock=time.monotonic, sleep=time.sleep):
-    """Returns None when the Pi is online, else (notice, saved profiles) for the setup."""
-    saved = net.saved_wifi()
+def read_home_wifi():
+    try:
+        return {line.strip() for line in HOME_WIFI_FILE.read_text().splitlines() if line.strip()}
+    except OSError:
+        return set()
+
+
+def wait_for_network(net, home_wifi=frozenset(), clock=time.monotonic, sleep=time.sleep):
+    """Returns None when the Pi is online, else (notice, saved profiles) for the setup.
+
+    The Wi-Fi from the first start at home does not count as the mosque's: without it
+    in reach the setup starts right away instead of waiting for a router to come back.
+    """
+    saved = [(name, ssid) for name, ssid in net.saved_wifi() if ssid not in home_wifi]
     start = clock()
     if not saved:
-        while clock() - start < LAN_GRACE_S:
-            if net.ethernet_up():
+        grace = HOME_WIFI_GRACE_S if home_wifi else LAN_GRACE_S
+        while clock() - start < grace:
+            if net.ethernet_up() or net.wifi_up():
                 return None
             sleep(3)
         return (None, saved)
@@ -514,7 +537,8 @@ def main():
         write_state("online")
         return
 
-    decision = wait_for_network(net)
+    home_wifi = read_home_wifi()
+    decision = wait_for_network(net, home_wifi)
     if decision is None:
         log("online")
         write_state("online")
@@ -525,7 +549,7 @@ def main():
     log(f"starting the setup ({notice or 'no saved Wi-Fi'})")
     address = address_file.read_text()
     ssid, password = f"{AP_PREFIX}-{mac_suffix(address)}", setup_password()
-    setup = Setup(net, notice=notice, saved=saved)
+    setup = Setup(net, notice=notice, saved=saved, home_wifi=home_wifi)
     write_qr_codes(ssid, password)
     setup.start(ssid, password)
     server = ThreadingHTTPServer(("", PORT), make_handler(setup))

@@ -192,6 +192,8 @@ if [ -n "$SSID" ]; then
   } > "$WIFI_FILE"
   chmod 600 "$WIFI_FILE" 2>/dev/null || true
   echo "  $WIFI_FILE geschrieben (SSID: $SSID)."
+  # Marks this Wi-Fi as the one for the first start at home (see wifi-setup/README.md).
+  printf '%s\n' "$SSID" > "$MOUNT_DIR/fleet-setup-wifi"
 else
   echo "  wifi.conf: skip (kein --ssid)."
 fi
