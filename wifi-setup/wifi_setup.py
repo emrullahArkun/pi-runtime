@@ -202,13 +202,15 @@ class Network:
         return True, ""
 
     def start_ap(self, ssid, password):
+        # NetworkManager's own hotspot settings: phones failed the handshake with a
+        # hand-built profile (fixed band and PMF off) on the Pi 4.
         run(["nmcli", "connection", "delete", "id", AP_CON])
-        run(["nmcli", "connection", "add", "type", "wifi", "ifname", IFACE, "con-name", AP_CON, "autoconnect", "no",
-             "ssid", ssid, "802-11-wireless.mode", "ap", "802-11-wireless.band", "bg",
-             "ipv4.method", "shared", "ipv4.addresses", f"{AP_ADDR}/24", "ipv6.method", "disabled",
-             "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", password, "wifi-sec.proto", "rsn",
-             "wifi-sec.pairwise", "ccmp", "wifi-sec.group", "ccmp", "wifi-sec.pmf", "1"])
-        return run(["nmcli", "--wait", "20", "connection", "up", "id", AP_CON], timeout=35)[0]
+        ok, out = run(["nmcli", "--wait", "20", "device", "wifi", "hotspot", "ifname", IFACE,
+                       "con-name", AP_CON, "ssid", ssid, "password", password], timeout=35)
+        if not ok:
+            log(f"hotspot failed: {out}")
+        run(["nmcli", "connection", "modify", "id", AP_CON, "connection.autoconnect", "no"])
+        return ok
 
     def stop_ap(self):
         run(["nmcli", "connection", "down", "id", AP_CON])
@@ -377,7 +379,8 @@ def make_handler(setup):
             return (self.headers.get("Host") or "").rsplit(":", 1)[0].lower()
 
         def _from_phone(self):
-            return self.client_address[0].startswith("10.42.0.")
+            ip = self.client_address[0]
+            return ip.startswith("10.42.0.") and ip != AP_ADDR
 
         def _send(self, status, body=b"", kind="text/plain", cache="no-store", location=None):
             self.send_response(status)
