@@ -55,6 +55,15 @@ if [ -f /etc/systemd/system/big-wifi-setup.service ]; then
     sleep 1
   done
 fi
+# A fresh Wi-Fi connection can take a moment before the kiosk is reachable, and Chromium
+# never reloads its error page. Offline (no answer within a minute) the service worker
+# serves the cached kiosk anyway.
+if [ "$START_URL" = "$KIOSK_URL" ]; then
+  for _ in $(seq 1 20); do
+    curl -fsS -o /dev/null --max-time 3 "$KIOSK_BASE_URL/" 2>/dev/null && break
+    sleep 2
+  done
+fi
 
 # Right after boot switch the TV to this HDMI input (if it is on and speaks CEC).
 if [ "$(cut -d. -f1 /proc/uptime)" -lt 300 ] && [ -x /usr/local/sbin/fleet-control ]; then
@@ -105,7 +114,6 @@ exec cage -d -- "$CHROMIUM_BIN" \
   --check-for-update-interval=31536000 \
   --disable-pinch \
   --overscroll-history-navigation=0 \
-  --use-gl=egl \
   --enable-features=VaapiVideoDecoder,CanvasOopRasterization \
   --ignore-gpu-blocklist \
   --enable-gpu-rasterization \

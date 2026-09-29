@@ -153,8 +153,21 @@
   let connectedAt = 0;
 
   // Back to the kiosk once connected, or when the setup service is gone.
-  function leave() {
-    if (next && /^https?:\/\//.test(next)) location.replace(next);
+  // Only once the kiosk answers: right after joining a Wi-Fi it may not be reachable yet,
+  // and Chromium would keep its error page for good.
+  let leaving = false;
+  async function leave() {
+    if (leaving || !next || !/^https?:\/\//.test(next)) return;
+    leaving = true;
+    for (let i = 0; i < 60; i++) {
+      try {
+        await fetch(next, { mode: "no-cors", cache: "no-store" });
+        break;
+      } catch {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+    }
+    location.replace(next);
   }
 
   async function poll() {

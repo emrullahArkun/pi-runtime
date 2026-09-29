@@ -297,6 +297,8 @@ fi
 # With it the driver reports WPA3, NetworkManager then offers WPA2/WPA3 in the setup Wi-Fi
 # and prefers WPA3 when joining, which the Pi's Wi-Fi chip cannot do: phones got "wrong
 # password" (raspberrypi/linux#7634). Kernel parameters come after modprobe.d, so this wins.
+# Kernel and systemd messages go to tty3; tty1 is the TV.
+sudo sed -i "1 s/\(^\| \)console=tty1\( \|\$\)/\1console=tty3\2/" /boot/firmware/cmdline.txt
 for flag in quiet splash plymouth.ignore-serial-consoles loglevel=3 logo.nologo vt.global_cursor_default=0 \
     brcmfmac.feature_disable=0x2282000; do
   grep -qE "(^| )${flag}( |\$)" /boot/firmware/cmdline.txt || sudo sed -i "1 s/\$/ ${flag}/" /boot/firmware/cmdline.txt
