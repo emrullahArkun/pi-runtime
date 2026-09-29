@@ -3,7 +3,8 @@
 # Kiosk Launcher - wird beim Boot gestartet
 # ============================================
 
-exec > >(tee -a /tmp/kiosk.log) 2>&1
+# Only into the log: the TV shows tty1 until the browser is up.
+exec >> /tmp/kiosk.log 2>&1
 echo "=== kiosk.sh started at $(date) ==="
 
 # Toggle: wenn ~/.use-cog existiert, stattdessen Cog/WPE starten

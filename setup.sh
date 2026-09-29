@@ -250,13 +250,14 @@ done
 echo "[8/8] Autologin auf tty1 + Kiosk-Autostart..."
 # Not autologin.conf: raspi-config owns that name, and cloud-init's user rename on the first
 # start of a gold image runs it (cancel-rename, "console without autologin"). Drop-ins apply
-# in name order, so this one wins either way.
+# in name order, so this one wins either way. --skip-login keeps the autologin but prints no
+# login line on the TV.
 sudo mkdir -p /etc/systemd/system/getty@tty1.service.d
 sudo rm -f /etc/systemd/system/getty@tty1.service.d/autologin.conf
 sudo tee /etc/systemd/system/getty@tty1.service.d/zz-kiosk-autologin.conf > /dev/null << EOF
 [Service]
 ExecStart=
-ExecStart=-/sbin/agetty --autologin $USERNAME --noclear --noissue %I \$TERM
+ExecStart=-/sbin/agetty --autologin $USERNAME --skip-login --noclear --noissue %I \$TERM
 Type=idle
 EOF
 
@@ -292,7 +293,12 @@ if [ "$THEME_BEFORE" != "$(cat "$THEME_DIR"/* | sha256sum)" ] || [ "$(plymouth-s
   sudo plymouth-set-default-theme big
   REBUILD_INITRAMFS=1
 fi
-for flag in quiet splash plymouth.ignore-serial-consoles loglevel=3 logo.nologo vt.global_cursor_default=0; do
+# brcmfmac.feature_disable: Raspberry Pi's 0x282000 plus SAE_EXT (bit 25 in the 6.18 driver).
+# With it the driver reports WPA3, NetworkManager then offers WPA2/WPA3 in the setup Wi-Fi
+# and prefers WPA3 when joining, which the Pi's Wi-Fi chip cannot do: phones got "wrong
+# password" (raspberrypi/linux#7634). Kernel parameters come after modprobe.d, so this wins.
+for flag in quiet splash plymouth.ignore-serial-consoles loglevel=3 logo.nologo vt.global_cursor_default=0 \
+    brcmfmac.feature_disable=0x2282000; do
   grep -qE "(^| )${flag}( |\$)" /boot/firmware/cmdline.txt || sudo sed -i "1 s/\$/ ${flag}/" /boot/firmware/cmdline.txt
 done
 grep -q "^disable_splash=" /boot/firmware/config.txt || echo "disable_splash=1" | sudo tee -a /boot/firmware/config.txt > /dev/null

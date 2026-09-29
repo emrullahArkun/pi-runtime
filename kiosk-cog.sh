@@ -4,7 +4,8 @@
 # Stufe 2 aus TEST-PLAN.md
 # ============================================
 
-exec > >(tee -a /tmp/kiosk-cog.log) 2>&1
+# Only into the log: the TV shows tty1 until the browser is up.
+exec >> /tmp/kiosk-cog.log 2>&1
 echo "=== kiosk-cog.sh started at $(date) ==="
 
 # Kiosk-URL aus /etc/fleet/config (KIOSK_BASE_URL, Provisioning — nicht hardcoded,
