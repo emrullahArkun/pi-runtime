@@ -35,13 +35,18 @@ systemd-detect-virt -q --chroot 2>/dev/null && IN_CHROOT=1
 # falsche Home schreiben und Remote-Control bricht sofort weg.
 EXPECTED_USER="gebetszeiten-app"
 if [ "$EUID" -eq 0 ] && [ "$DO_INSTALL" = "1" ] && ! id "$EXPECTED_USER" >/dev/null 2>&1; then
-  # Gold image: the user exists before the first start, cloud-init then only sets its
-  # password and SSH key (it adds groups only to users it creates itself).
-  USER_GROUPS=""
-  for grp in adm dialout cdrom audio users sudo video games plugdev input gpio spi i2c netdev render lpadmin tty; do
-    getent group "$grp" > /dev/null && USER_GROUPS="${USER_GROUPS:+$USER_GROUPS,}$grp"
-  done
-  useradd -m -s /bin/bash -G "$USER_GROUPS" "$EXPECTED_USER"
+  # Gold image: Raspberry Pi OS ships a locked placeholder user (UID 1000, "pi") that its
+  # cloud-init renames on the first start. Renamed here already, cloud-init finds the right
+  # name and only sets the password and SSH key; a second user would make it fail.
+  PLACEHOLDER="$(getent passwd 1000 | cut -d: -f1)"
+  if [ -n "$PLACEHOLDER" ]; then
+    usermod -l "$EXPECTED_USER" "$PLACEHOLDER"
+    usermod -m -d "/home/$EXPECTED_USER" -s /bin/bash "$EXPECTED_USER"
+    groupmod -n "$EXPECTED_USER" "$(getent group 1000 | cut -d: -f1)"
+    sed -i "s/^$PLACEHOLDER:/$EXPECTED_USER:/" /etc/subuid /etc/subgid
+  else
+    useradd -m -s /bin/bash -G sudo,video,render,input,tty "$EXPECTED_USER"
+  fi
 fi
 if [ "$EUID" -eq 0 ]; then
   USERNAME="$EXPECTED_USER"

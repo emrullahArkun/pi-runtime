@@ -78,6 +78,8 @@ chroot "$MNT" /usr/bin/env -i HOME=/root LANG=C.UTF-8 \
   bash /opt/kiosk/setup.sh --install < /dev/null > "$WORK/setup.log" 2>&1 \
   || { tail -40 "$WORK/setup.log"; cp "$WORK/setup.log" /cache/build-failed.log; exit 1; }
 cp "$WORK/setup.log" "/cache/${OUT%.img.xz}.setup.log"
+# The user is the renamed placeholder (UID 1000), see setup.sh.
+[ "$(chroot "$MNT" id -u gebetszeiten-app)" = "1000" ] || { echo "FEHLER: Benutzer hat nicht UID 1000."; exit 1; }
 # The boot screen needs the Pi 4 initramfs with MODULES=most and the theme inside.
 grep -qx "MODULES=most" "$MNT/etc/initramfs-tools/conf.d/big-kiosk.conf" \
   && chroot "$MNT" sh -c 'lsinitramfs /boot/initrd.img-*-v8 | grep -q "plymouth/themes/big/big.script"' \
@@ -91,9 +93,9 @@ rm -f "$MNT/usr/sbin/policy-rc.d" "$MNT/etc/resolv.conf"
 [ -n "$RESOLV_BACKUP" ] && mv "$RESOLV_BACKUP" "$MNT/etc/resolv.conf"
 rm -rf "$MNT"/var/lib/apt/lists/* "$MNT"/tmp/* "$MNT"/var/tmp/* "$MNT"/root/.bash_history
 rm -f "$MNT"/etc/ssh/ssh_host_*
-# Empty, not "uninitialized": that would make the first start a systemd first boot,
-# whose preset-all re-enables units setup.sh disabled (the user rename wizard).
-: > "$MNT/etc/machine-id"
+# "uninitialized" like the official image: the first start counts as a systemd first boot,
+# which regenerates the SSH host keys (regenerate_ssh_host_keys.service).
+echo "uninitialized" > "$MNT/etc/machine-id"
 # Without a real-time clock the Pi starts with this time until it reaches NTP; much older
 # and HTTPS certificates would not be valid yet.
 install -d "$MNT/var/lib/systemd/timesync"
