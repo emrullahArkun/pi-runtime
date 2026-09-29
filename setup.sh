@@ -295,6 +295,14 @@ if [ "$REBUILD_INITRAMFS" = "1" ]; then
   sudo update-initramfs -u -k all
 fi
 
+# --- Swap only in RAM ---
+# Raspberry Pi OS pages idle memory out to /var/swap on the SD card (zram+file); the kiosk
+# keeps its compressed swap in RAM only. /tmp and the journal are in RAM already.
+if [ -f /etc/rpi/swap.conf ]; then
+  sudo install -d -m 0755 /etc/rpi/swap.conf.d
+  printf '[Main]\nMechanism=zram\n' | sudo tee /etc/rpi/swap.conf.d/big-kiosk.conf > /dev/null
+fi
+
 # The first-boot wizard of Raspberry Pi OS would ask on tty8 to rename the user.
 sudo systemctl disable userconfig.service 2>/dev/null || true
 

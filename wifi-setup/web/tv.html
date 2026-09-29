@@ -9,7 +9,6 @@
      are animated, so the Pi's compositor does the work instead of repainting. */
   :root { --dp: min(100vw / 1920, 100vh / 1080); --ease: cubic-bezier(0.2, 0.8, 0.2, 1); }
   body { height: 100vh; overflow: hidden; cursor: none; display: flex; align-items: center; justify-content: center; }
-  .brand { position: absolute; top: calc(48 * var(--dp)); left: calc(64 * var(--dp)); height: calc(44 * var(--dp)); }
   .stage { display: flex; flex-direction: column; align-items: center; }
 
   .notice { display: flex; align-items: center; gap: calc(18 * var(--dp)); height: calc(104 * var(--dp)); margin: 0 0 calc(28 * var(--dp)); padding: 0 calc(48 * var(--dp)); border-radius: calc(52 * var(--dp)); font-size: calc(44 * var(--dp)); font-weight: 600; background: var(--info-bg); color: var(--text-mid); transition: opacity 0.3s; }
@@ -53,7 +52,7 @@
   .boot::after { border-color: transparent; border-top-color: var(--primary); animation: spin 1.2s linear infinite; will-change: transform; }
   .boot img { width: calc(380 * var(--dp)); }
   body.booting .boot { display: grid; }
-  body.booting .brand, body.booting .stage { display: none; }
+  body.booting .stage { display: none; }
   @keyframes spin { to { transform: rotate(360deg); } }
 
   @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
@@ -61,7 +60,6 @@
 </head>
 <body class="booting">
 <div class="boot" aria-hidden="true"><img src="big-mark.png" alt=""></div>
-<img class="brand" src="big-mark.png" alt="BIG">
 <main class="stage">
   <p class="notice off" id="notice">
     <svg class="icon" viewBox="0 0 24 24"><path id="notice-icon"/></svg>

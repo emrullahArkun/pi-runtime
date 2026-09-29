@@ -88,6 +88,8 @@ export XCURSOR_THEME=fleet-hidden
 export XCURSOR_PATH="$HOME/.icons:/usr/share/icons:/usr/share/pixmaps"
 export XCURSOR_SIZE=1
 
+# HTTP cache in RAM (/tmp is tmpfs) to spare the SD card; the offline copy of the kiosk
+# lives in the service worker storage of the profile and survives reboots.
 exec cage -d -- "$CHROMIUM_BIN" \
   --kiosk \
   --noerrdialogs \
@@ -114,4 +116,6 @@ exec cage -d -- "$CHROMIUM_BIN" \
   --disable-smooth-scrolling \
   --disable-background-timer-throttling \
   --disable-renderer-backgrounding \
+  --disk-cache-dir=/tmp/chromium-cache \
+  --disk-cache-size=67108864 \
   "$START_URL"
