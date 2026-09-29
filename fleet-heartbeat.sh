@@ -136,12 +136,14 @@ RESP="$(curl -fsS --max-time 10 \
   -d "$PAYLOAD" \
   "${FLEET_HEARTBEAT_URL}/pi/heartbeat" || true)"
 
-# kiosk.sh reads the id as the Pi user and appends it to the kiosk URL.
+# kiosk.sh reads the id as the Pi user and appends it to the kiosk URL, so a new id
+# (first enrollment) restarts the kiosk.
 KID="$(printf '%s' "$RESP" | jq -r '.kiosk_id // empty' 2>/dev/null || true)"
 if [ -n "$KID" ]; then
   mkdir -p /etc/fleet
   if [ "$KID" != "$(cat /etc/fleet/kiosk-id 2>/dev/null || true)" ]; then
     printf '%s\n' "$KID" > /etc/fleet/kiosk-id
     chmod 0644 /etc/fleet/kiosk-id
+    pkill -SIGHUP -x cage || pkill -SIGHUP -x cog || true
   fi
 fi

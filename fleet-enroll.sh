@@ -1,7 +1,8 @@
 #!/bin/bash
-# First start of a gold image: waits for internet (the Wi-Fi setup may still be running),
-# enrolls the Pi with the token on the boot partition and restarts the kiosk, which then
-# knows its kiosk id and shows the pairing QR code. systemd retries a failed run.
+# First start of a gold image: waits for internet (the Wi-Fi setup may still be running)
+# and enrolls the Pi with the token on the boot partition. Its first heartbeat brings the
+# kiosk id and restarts the kiosk, which then shows the pairing QR code. systemd retries
+# a failed run.
 
 set -uo pipefail
 
@@ -20,9 +21,11 @@ fi
 until curl -fsS --max-time 10 -o /dev/null "$API_URL/health"; do
   sleep 10
 done
-echo "Server erreichbar, melde an..."
+echo "Server erreichbar."
 
+# An older image first takes the current scripts of its channel (like every night).
+/usr/local/sbin/kiosk-selfupdate.sh || true
+
+echo "Melde an..."
 bash /opt/kiosk/setup.sh --enroll || exit 1
-
-pkill -SIGHUP -x cage || pkill -SIGHUP -x cog || true
 echo "Angemeldet."
