@@ -1,0 +1,15 @@
+[Unit]
+Description=Fleet enrollment on the first start of a gold image
+After=network.target big-wifi-setup.service
+ConditionPathExists=!/var/lib/fleet/enrolled
+StartLimitIntervalSec=0
+
+[Service]
+# Not oneshot: waiting for internet must not hold up the boot.
+Type=simple
+ExecStart=/usr/local/sbin/fleet-enroll.sh
+Restart=on-failure
+RestartSec=60
+
+[Install]
+WantedBy=multi-user.target

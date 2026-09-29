@@ -1,11 +1,11 @@
 #!/bin/bash
 # Prepares an SD card for a fleet Pi. Normally called by provision-pi.sh.
 #
-# With --image the card is written from scratch (Raspberry Pi OS .img.xz) and
-# --user-data becomes the cloud-init user-data (user, hostname, SSH key), like the
+# With --image the card is written from scratch (gold image or Raspberry Pi OS .img.xz)
+# and --user-data becomes the cloud-init user-data (user, hostname, SSH key), like the
 # Raspberry Pi Imager does. Without --image the card must already be flashed.
-# Then it adds the fleet enrollment, an optional wifi.conf and the first-boot
-# bootstrap (git, pi-runtime, setup.sh).
+# Then it adds the fleet enrollment, an optional Wi-Fi and, unless it is a gold image,
+# the first-boot bootstrap (git, pi-runtime, setup.sh).
 #
 # Usage:
 #   sudo ./flash.sh --device /dev/sdX --token TOKEN --api URL --kiosk-url URL \
@@ -233,6 +233,10 @@ else
     echo "  WLAN $SSID fuer den ersten Start eingetragen."
   fi
 
+  # The gold image (image/build.sh) is installed already; fleet-enroll registers it.
+  if [ -x "$ROOT_MOUNT_DIR/usr/local/sbin/fleet-enroll.sh" ]; then
+    echo "  Gold-Image: Anmeldung beim ersten Netz (fleet-enroll), kein Bootstrap noetig."
+  else
   BOOTSTRAP_SCRIPT="$ROOT_MOUNT_DIR/usr/local/sbin/fleet-bootstrap.sh"
   cat > "$BOOTSTRAP_SCRIPT" << 'BOOTSTRAP_EOF'
 #!/bin/bash
@@ -321,6 +325,7 @@ UNIT_EOF
   mkdir -p "$WANTS_DIR"
   ln -sf /etc/systemd/system/fleet-bootstrap.service "$WANTS_DIR/fleet-bootstrap.service"
   echo "  fleet-bootstrap.service aktiviert (multi-user.target.wants)."
+  fi
 fi
 
 echo

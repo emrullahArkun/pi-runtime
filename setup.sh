@@ -1,29 +1,48 @@
 #!/bin/bash
-# ============================================
-# Raspberry Pi Kiosk Prototyp - Setup Script
-# Auf dem Pi ausfuehren nach frischer Pi OS Lite Installation
-# ============================================
+# Sets up a fleet kiosk Pi on Raspberry Pi OS Lite.
+#
+#   (no option)  install and enroll, as the kiosk user (first-boot bootstrap, manual runs)
+#   --install    everything that needs no identity; builds the gold image (root, chroot)
+#   --enroll     registration, WireGuard, heartbeat, remote control (fleet-enroll, root)
+#   --update     nightly run of kiosk-selfupdate.sh (root): --install without upgrading,
+#                then the enroll steps that are safe to repeat, never a new registration
 
 set -e
 
-# --update: the nightly run from kiosk-selfupdate.sh (as root). Installs scripts, services,
-# sudoers and configuration, adds missing packages, but never upgrades (unattended-upgrades
-# does that) and never enrolls.
-UPDATE=0
-[ "${1:-}" = "--update" ] && UPDATE=1
+MODE="${1:-all}"
+case "$MODE" in
+  all|--install|--enroll|--update) ;;
+  *) echo "FEHLER: unbekannter Modus '$MODE' (--install, --enroll, --update)."; exit 1 ;;
+esac
+UPDATE=0; DO_INSTALL=1; DO_ENROLL=1
+[ "$MODE" = "--update" ] && UPDATE=1
+[ "$MODE" = "--install" ] && DO_ENROLL=0
+[ "$MODE" = "--enroll" ] && DO_INSTALL=0
 
-if [ "$EUID" -eq 0 ] && [ "$UPDATE" = "0" ]; then
+if [ "$EUID" -eq 0 ] && [ "$MODE" = "all" ]; then
   echo "FEHLER: Bitte NICHT als root ausfuehren. Lauf als normaler User mit sudo-Rechten."
   exit 1
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# The gold image is built in a chroot: units can be enabled there, not started.
+IN_CHROOT=0
+systemd-detect-virt -q --chroot 2>/dev/null && IN_CHROOT=1
 
 # Fleet-weite Konvention: der Linux-User muss "gebetszeiten-app" heissen. Die API SSHt
 # mit diesem fest verdrahteten Namen (siehe api/src/ssh.ts SSH_USER), damit
 # sie ohne pro-Pi-Konfig auskommt. Setup.sh wuerde sonst die SSH-Keys ins
 # falsche Home schreiben und Remote-Control bricht sofort weg.
 EXPECTED_USER="gebetszeiten-app"
+if [ "$EUID" -eq 0 ] && [ "$DO_INSTALL" = "1" ] && ! id "$EXPECTED_USER" >/dev/null 2>&1; then
+  # Gold image: the user exists before the first start, cloud-init then only sets its
+  # password and SSH key (it adds groups only to users it creates itself).
+  USER_GROUPS=""
+  for grp in adm dialout cdrom audio users sudo video games plugdev input gpio spi i2c netdev render lpadmin tty; do
+    getent group "$grp" > /dev/null && USER_GROUPS="${USER_GROUPS:+$USER_GROUPS,}$grp"
+  done
+  useradd -m -s /bin/bash -G "$USER_GROUPS" "$EXPECTED_USER"
+fi
 if [ "$EUID" -eq 0 ]; then
   USERNAME="$EXPECTED_USER"
   USERHOME="$(getent passwd "$USERNAME" | cut -d: -f6)"
@@ -45,7 +64,7 @@ fi
 # --- Pi-Modell erkennen ---
 # Zero 2W / Pi 3 haben schwaechere GPU und wenig RAM -> gpu_mem=64 ist optimal
 # Pi 4 / Pi 5 haben genug RAM -> gpu_mem=128 fuer bessere GPU-Performance + Video-Decode
-PI_MODEL="$(tr -d '\0' < /proc/device-tree/model 2>/dev/null || echo 'Unknown')"
+PI_MODEL="${PI_MODEL:-$(tr -d '\0' < /proc/device-tree/model 2>/dev/null || echo 'Unknown')}"
 case "$PI_MODEL" in
   *"Pi Zero"*|*"Pi 3"*) GPU_MEM=64 ;;
   *"Pi 4"*|*"Pi 5"*)    GPU_MEM=128 ;;
@@ -57,8 +76,12 @@ echo "Modell: $PI_MODEL"
 echo "User:   $USERNAME (UID $USERUID)"
 echo "Home:   $USERHOME"
 echo "GPU:    ${GPU_MEM} MB"
-[ "$UPDATE" = "1" ] && echo "Modus:  --update"
+[ "$MODE" != "all" ] && echo "Modus:  $MODE"
 echo ""
+
+# Never asks: the nightly update and the image build have nobody to answer.
+APT=(sudo env DEBIAN_FRONTEND=noninteractive apt-get -q -y -o DPkg::Lock::Timeout=600
+     -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
 
 # Installs what is missing; never upgrades what is there.
 ensure_packages() {
@@ -67,8 +90,8 @@ ensure_packages() {
     dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "ok installed" || missing+=("$pkg")
   done
   [ "${#missing[@]}" -eq 0 ] && return 0
-  [ "$UPDATE" = "1" ] && sudo apt-get -q -o DPkg::Lock::Timeout=600 update
-  sudo env DEBIAN_FRONTEND=noninteractive apt-get -q -y -o DPkg::Lock::Timeout=600 install "${missing[@]}"
+  [ "$UPDATE" = "1" ] && "${APT[@]}" update
+  "${APT[@]}" install "${missing[@]}"
 }
 
 # Files in the kiosk user's home stay theirs when the update runs as root.
@@ -77,10 +100,12 @@ own() {
   return 0
 }
 
+if [ "$DO_INSTALL" = "1" ]; then
+
 # --- System updaten ---
 if [ "$UPDATE" = "0" ]; then
   echo "[1/8] System updaten..."
-  sudo apt update && sudo apt upgrade -y
+  "${APT[@]}" update && "${APT[@]}" full-upgrade
 fi
 
 # --- Kiosk-Pakete installieren ---
@@ -229,6 +254,9 @@ EOF
 fi
 own "$PROFILE"
 
+# The first-boot wizard of Raspberry Pi OS would ask on tty8 to rename the user.
+sudo systemctl disable userconfig.service 2>/dev/null || true
+
 # Alte systemd kiosk.service deaktivieren falls vorhanden (Autologin-Weg ist zuverlaessiger)
 sudo systemctl disable kiosk.service 2>/dev/null || true
 sudo rm -f /etc/systemd/system/kiosk.service
@@ -259,9 +287,12 @@ echo "[+] WLAN-Setup ueber den Fernseher installieren..."
 if [ -f "$SCRIPT_DIR/wifi-setup/wifi_setup.py" ]; then
   ensure_packages qrencode dnsmasq-base iw
   # Without a Wi-Fi country Raspberry Pi OS keeps the radio blocked (no Wi-Fi in the Imager).
-  WIFI_COUNTRY="$(sudo raspi-config nonint get_wifi_country 2>/dev/null || true)"
-  if [ -z "$WIFI_COUNTRY" ] || [ "$WIFI_COUNTRY" = "00" ]; then
-    sudo raspi-config nonint do_wifi_country DE || echo "  WARN: WLAN-Land nicht gesetzt."
+  # In the image build flash.sh sets it on the kernel command line instead.
+  if [ "$IN_CHROOT" = "0" ]; then
+    WIFI_COUNTRY="$(sudo raspi-config nonint get_wifi_country 2>/dev/null || true)"
+    if [ -z "$WIFI_COUNTRY" ] || [ "$WIFI_COUNTRY" = "00" ]; then
+      sudo raspi-config nonint do_wifi_country DE || echo "  WARN: WLAN-Land nicht gesetzt."
+    fi
   fi
   sudo install -d -m 0755 -o root -g root /usr/local/lib/big-wifi-setup/web
   sudo install -m 0755 -o root -g root "$SCRIPT_DIR/wifi-setup/wifi_setup.py" /usr/local/lib/big-wifi-setup/wifi_setup.py
@@ -277,6 +308,16 @@ if [ -f "$SCRIPT_DIR/wifi-setup/wifi_setup.py" ]; then
 else
   echo "  SKIP: wifi-setup/ fehlt im SCRIPT_DIR."
 fi
+
+# --- Enrollment on the first start of a gold image ---
+# Waits for internet (after the Wi-Fi setup), then runs `setup.sh --enroll`. Pis that are
+# already enrolled have /var/lib/fleet/enrolled (written below) and skip it.
+echo "[+] Anmeldung beim ersten Start (fleet-enroll)..."
+ensure_packages wireguard wireguard-tools jq curl iw git ca-certificates
+sudo install -m 0755 -o root -g root "$SCRIPT_DIR/fleet-enroll.sh" /usr/local/sbin/fleet-enroll.sh
+sudo install -m 0644 -o root -g root "$SCRIPT_DIR/fleet-enroll.service" /etc/systemd/system/fleet-enroll.service
+sudo systemctl daemon-reload
+sudo systemctl enable fleet-enroll.service
 
 # --- Taeglicher Reboot um 03:00 ---
 # Plan-Phase-4: Reboot nimmt Memory-Leaks/X-Drift weg, holt geaenderte
@@ -344,6 +385,10 @@ sudo touch /var/log/kiosk-update.log
 sudo chmod 644 /var/log/kiosk-update.log
 echo "  Cron installiert (02:00 daily, Kanal $(cat /etc/fleet/channel), log: /var/log/kiosk-update.log)."
 
+fi # DO_INSTALL
+
+if [ "$DO_ENROLL" = "1" ]; then
+
 # --- Fleet-Setup ---
 # Aufgespaltet in vier idempotente Bloecke, damit Re-Run von setup.sh auf einem
 # bereits registrierten Pi NICHT alles weiterreicht (= heutiges Verhalten = bug),
@@ -392,6 +437,7 @@ CPU_SERIAL="$(awk -F': ' '/^Serial/ {print $2; exit}' /proc/cpuinfo || true)"
 if [ -z "${FLEET_API_URL:-}" ]; then
   echo "  SKIP: FLEET_API_URL nicht aufloesbar (weder ENV, $ENROLLMENT_FILE, noch $PERSISTED_CONFIG)."
   echo "        Pi laeuft als reiner Kiosk ohne Fleet-Anbindung."
+  [ "$MODE" = "--enroll" ] && exit 1
   FLEET_ENABLED=0
 elif [ -z "$CPU_SERIAL" ]; then
   echo "  SKIP: CPU-Serial konnte nicht aus /proc/cpuinfo gelesen werden — kein Fleet-Setup."
@@ -736,6 +782,15 @@ else
   echo "  SKIP: kein nutzbarer Key in authorized_keys — Passwort-Login bleibt vorerst an"
   echo "        (Schutz vor Aussperren). Greift beim naechsten Run, sobald Keys da sind."
 fi
+
+if sudo test -f /etc/wireguard/wg0.conf; then
+  sudo install -d -m 0755 /var/lib/fleet
+  sudo touch /var/lib/fleet/enrolled
+fi
+
+fi # DO_ENROLL
+
+[ "$MODE" = "all" ] || exit 0
 
 echo ""
 echo "=== Setup fertig! ==="

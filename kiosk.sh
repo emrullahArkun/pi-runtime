@@ -17,7 +17,10 @@ fi
 # Projekt-URL preisgibt. ?kiosk=1 = Kiosk-Modus (Cursor aus), &kid=<uuid> = die
 # server-vergebene kioskId (von fleet-heartbeat.sh nach /etc/fleet/kiosk-id).
 KIOSK_BASE_URL=""
-[ -r /etc/fleet/config ] && KIOSK_BASE_URL="$(grep -E '^KIOSK_BASE_URL=' /etc/fleet/config 2>/dev/null | tail -1 | cut -d= -f2-)"
+for conf in /etc/fleet/config /boot/firmware/fleet-enrollment.txt; do
+  # The enrollment file of a fresh gold image carries it until fleet-enroll has run.
+  [ -z "$KIOSK_BASE_URL" ] && [ -r "$conf" ] && KIOSK_BASE_URL="$(grep -E '^KIOSK_BASE_URL=' "$conf" 2>/dev/null | tail -1 | cut -d= -f2-)"
+done
 KIOSK_BASE_URL="${KIOSK_BASE_URL%/}"   # evtl. Trailing-Slash weg
 if [ -z "$KIOSK_BASE_URL" ]; then
   echo "FEHLER: KIOSK_BASE_URL fehlt in /etc/fleet/config — Pi nicht provisioniert?"

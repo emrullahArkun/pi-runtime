@@ -1,17 +1,19 @@
 #!/bin/bash
 # provision-pi.sh — one command from an empty SD card to a fleet Pi.
 #
-# Asks for what it needs (name, device password, optionally the Wi-Fi for the first
-# start), downloads and verifies Raspberry Pi OS Lite (64-bit), creates the Pi's slot
-# on the server and writes everything to the card: OS, cloud-init user-data (user
-# gebetszeiten-app, hostname, your SSH key) and the fleet enrollment.
+# Asks for the name (and optionally the Wi-Fi for a first start at home), creates the
+# Pi's slot on the server and writes everything to the card: the newest gold image from
+# image/build.sh (or, without one, Raspberry Pi OS Lite 64-bit, installed on the first
+# start), cloud-init user-data (user gebetszeiten-app, hostname, your SSH key, a random
+# device password) and the fleet enrollment. The password is shown once at the end.
 # No Raspberry Pi Imager needed.
 #
 # Usage:
 #   ./provision-pi.sh [--name merkez] [--device /dev/sdX] [--ssh-key ~/.ssh/id_ed25519.pub]
-#                     [--ssid WLAN --psk pw] [--image os.img.xz] [--no-os]
-#   --no-os   the card was already flashed with the Imager (old way): only adds the
-#             enrollment and the first-boot bootstrap.
+#                     [--ssid WLAN --psk pw] [--image os.img.xz] [--official] [--no-os]
+#   --official  Raspberry Pi OS instead of the gold image (installs on the first start)
+#   --no-os     the card was already flashed with the Imager (old way): only adds the
+#               enrollment and the first-boot bootstrap.
 #
 # Run WITHOUT sudo (the server connection uses your SSH key); the script calls sudo
 # itself for writing the card.
@@ -19,9 +21,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=image/os-image.sh
+. "$SCRIPT_DIR/image/os-image.sh"
 CONF="$SCRIPT_DIR/fleet.conf"
 PI_USER="gebetszeiten-app"
-OS_URL="https://downloads.raspberrypi.com/raspios_lite_arm64_latest"
 CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/big-kiosk"
 
 NAME=""
@@ -31,6 +34,7 @@ PSK=""
 SSH_KEY="$HOME/.ssh/id_ed25519.pub"
 IMAGE=""
 WRITE_OS=1
+OFFICIAL=0
 
 usage() {
   sed -n '2,/^set -euo pipefail/p' "$0" | head -n -1 | sed 's/^# \?//'
@@ -46,6 +50,7 @@ while [ $# -gt 0 ]; do
     --ssh-key) SSH_KEY="$2"; shift 2 ;;
     --image)   IMAGE="$2"; shift 2 ;;
     --no-os)   WRITE_OS=0; shift ;;
+    --official) OFFICIAL=1; shift ;;
     --config)  CONF="$2"; shift 2 ;;
     -h|--help) usage ;;
     *)         echo "Unbekanntes Argument: $1"; usage ;;
@@ -118,16 +123,27 @@ if [ "$WRITE_OS" = "1" ]; then
     echo "FEHLER: $SSH_KEY ist kein oeffentlicher SSH-Schluessel (.pub)."
     exit 1
   fi
-  echo "Geraetepasswort fuer '$PI_USER' (fuer sudo im Panel-Terminal; am besten aus dem Passwort-Manager):"
-  while :; do
-    read -r -s -p "  Passwort: " PW; echo
-    read -r -s -p "  Nochmal:  " PW2; echo
-    if [ "${#PW}" -lt 12 ]; then echo "  Mindestens 12 Zeichen."; continue; fi
-    [ "$PW" = "$PW2" ] && break
-    echo "  Stimmt nicht ueberein."
+  # Device password (sudo in the panel terminal): random per Pi, shown once at the end.
+  RAW=""
+  while [ "${#RAW}" -lt 20 ]; do
+    RAW+="$(openssl rand -base64 48 | tr -dc 'abcdefghjkmnpqrstuvwxyz23456789')"
   done
-  PW_HASH="$(openssl passwd -6 -stdin <<< "$PW")"
-  unset PW PW2
+  DEVICE_PASSWORD="${RAW:0:5}-${RAW:5:5}-${RAW:10:5}-${RAW:15:5}"
+  unset RAW
+  PW_HASH="$(openssl passwd -6 -stdin <<< "$DEVICE_PASSWORD")"
+
+  # The newest gold image from image/build.sh, if there is one and it is intact.
+  if [ -z "$IMAGE" ] && [ "$OFFICIAL" = "0" ]; then
+    mapfile -t GOLD_IMAGES < <(printf '%s\n' "$CACHE_DIR"/big-kiosk-*.img.xz | sort -r)
+    for gold in "${GOLD_IMAGES[@]}"; do
+      [ -f "$gold" ] || continue
+      if (cd "$CACHE_DIR" && sha256sum -c --quiet "$(basename "$gold").sha256" 2>/dev/null); then
+        IMAGE="$gold"
+        break
+      fi
+      echo "WARN: $(basename "$gold") ist beschaedigt oder ohne Pruefsumme, uebersprungen."
+    done
+  fi
 fi
 
 # --- Wi-Fi for the first start (optional) ---
@@ -144,7 +160,11 @@ echo "=== Zusammenfassung ==="
 echo "  Name:        $NAME"
 echo "  SD-Karte:    $DEVICE ($(describe "$DEVICE"))"
 if [ "$WRITE_OS" = "1" ]; then
-  echo "  System:      Raspberry Pi OS Lite 64-bit, wird frisch geschrieben"
+  if [ -n "$IMAGE" ]; then
+    echo "  System:      $(basename "$IMAGE"), wird frisch geschrieben"
+  else
+    echo "  System:      Raspberry Pi OS Lite 64-bit (ohne Gold-Image: Installation beim ersten Start)"
+  fi
   echo "  Benutzer:    $PI_USER, SSH-Schluessel $(awk '{print $NF}' "$SSH_KEY")"
 else
   echo "  System:      schon vom Imager geschrieben (--no-os)"
@@ -162,15 +182,7 @@ if [ "$WRITE_OS" = "1" ] && [ -z "$IMAGE" ]; then
   mkdir -p "$CACHE_DIR"
   echo
   echo "[1/4] Raspberry Pi OS pruefen..."
-  URL="$(curl -fsIL -o /dev/null -w '%{url_effective}' "$OS_URL")"
-  IMAGE="$CACHE_DIR/$(basename "$URL")"
-  curl -fsL "$URL.sha256" -o "$IMAGE.sha256"
-  if ! (cd "$CACHE_DIR" && sha256sum -c --quiet "$(basename "$IMAGE").sha256" 2>/dev/null); then
-    echo "  Lade $(basename "$URL") ..."
-    curl -fL --progress-bar "$URL" -o "$IMAGE"
-    (cd "$CACHE_DIR" && sha256sum -c --quiet "$(basename "$IMAGE").sha256") \
-      || { echo "FEHLER: Pruefsumme stimmt nicht, Download kaputt."; rm -f "$IMAGE"; exit 1; }
-  fi
+  IMAGE="$(fetch_official_image "$CACHE_DIR")" || exit 1
   echo "  $(basename "$IMAGE") ist geprueft."
 fi
 
@@ -183,8 +195,6 @@ if [ "$WRITE_OS" = "1" ]; then
 manage_resolv_conf: false
 hostname: $NAME
 manage_etc_hosts: true
-packages:
-- avahi-daemon
 apt:
   preserve_sources_list: true
   conf: |
@@ -199,7 +209,7 @@ user:
   name: $PI_USER
   shell: /bin/bash
   lock_passwd: false
-  passwd: "$PW_HASH"
+  hashed_passwd: "$PW_HASH"
   ssh_authorized_keys:
     - "$(head -1 "$SSH_KEY")"
   sudo: null
@@ -250,9 +260,25 @@ sync
 for part in $(lsblk -nrpo NAME "$DEVICE" | tail -n +2); do
   udisksctl unmount -b "$part" >/dev/null 2>&1 || true
 done
-if [ -n "$SSID" ]; then
+if [ -n "${DEVICE_PASSWORD:-}" ]; then
+  echo
+  echo "  ┌──────────────────────────────────────────────────────────┐"
+  echo "  │ Geraetepasswort fuer '$NAME' (jetzt in den Passwort-Manager):"
+  echo "  │"
+  echo "  │     $DEVICE_PASSWORD"
+  echo "  │"
+  echo "  │ Es wird nirgends gespeichert und nicht noch einmal angezeigt."
+  echo "  └──────────────────────────────────────────────────────────┘"
+  echo
+fi
+if [ -n "$IMAGE" ] && [[ "$(basename "$IMAGE")" == big-kiosk-* ]]; then
+  echo "Karte in den Pi '$NAME' stecken, Strom an. Ohne Netz kommt nach 1-2 min"
+  echo "der WLAN-Setup-Bildschirm, danach meldet sich der Pi selbst an."
+elif [ -n "$SSID" ]; then
   echo "Karte herausnehmen, in den Pi '$NAME' stecken, Strom an."
+  echo "Der erste Start dauert 5-15 min."
 else
   echo "Karte herausnehmen, in den Pi '$NAME' stecken, LAN-Kabel an, Strom an."
+  echo "Der erste Start dauert 5-15 min."
 fi
-echo "Der erste Start dauert 5-15 min. Danach:  ssh $VPS_ALIAS 'sudo fleet manage-pis list'"
+echo "Danach:  ssh $VPS_ALIAS 'sudo fleet manage-pis list'"
