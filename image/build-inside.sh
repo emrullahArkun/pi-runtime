@@ -80,7 +80,8 @@ chroot "$MNT" /usr/bin/env -i HOME=/root LANG=C.UTF-8 \
 cp "$WORK/setup.log" "/cache/${OUT%.img.xz}.setup.log"
 # The user is the renamed placeholder (UID 1000), see setup.sh.
 [ "$(chroot "$MNT" id -u gebetszeiten-app)" = "1000" ] || { echo "FEHLER: Benutzer hat nicht UID 1000."; exit 1; }
-[ -f "$MNT/etc/systemd/system/getty@tty1.service.d/zz-kiosk-autologin.conf" ] || { echo "FEHLER: Autologin fehlt."; exit 1; }
+grep -q -- "--skip-login" "$MNT/etc/systemd/system/getty@tty1.service.d/zz-kiosk-autologin.conf" || { echo "FEHLER: Autologin fehlt."; exit 1; }
+grep -q "brcmfmac.feature_disable=0x2282000" "$MNT/boot/firmware/cmdline.txt" || { echo "FEHLER: WLAN-Treiber-Parameter fehlt."; exit 1; }
 # The boot screen needs the Pi 4 initramfs with MODULES=most and the theme inside.
 grep -qx "MODULES=most" "$MNT/etc/initramfs-tools/conf.d/big-kiosk.conf" \
   && chroot "$MNT" sh -c 'lsinitramfs /boot/initrd.img-*-v8 | grep -q "plymouth/themes/big/big.script"' \
