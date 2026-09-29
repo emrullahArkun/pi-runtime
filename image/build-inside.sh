@@ -78,6 +78,10 @@ chroot "$MNT" /usr/bin/env -i HOME=/root LANG=C.UTF-8 \
   bash /opt/kiosk/setup.sh --install < /dev/null > "$WORK/setup.log" 2>&1 \
   || { tail -40 "$WORK/setup.log"; cp "$WORK/setup.log" /cache/build-failed.log; exit 1; }
 cp "$WORK/setup.log" "/cache/${OUT%.img.xz}.setup.log"
+# The boot screen needs the Pi 4 initramfs with MODULES=most and the theme inside.
+grep -qx "MODULES=most" "$MNT/etc/initramfs-tools/conf.d/big-kiosk.conf" \
+  && chroot "$MNT" sh -c 'lsinitramfs /boot/initrd.img-*-v8 | grep -q "plymouth/themes/big/big.script"' \
+  || { echo "FEHLER: Startbildschirm fehlt im initramfs."; exit 1; }
 install -d "$MNT/var/lib/kiosk-update"
 echo "$RUNTIME_COMMIT" > "$MNT/var/lib/kiosk-update/applied"
 

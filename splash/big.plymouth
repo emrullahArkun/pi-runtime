@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=BIG
+Description=BIG mark with a ring turning around it
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/big
+ScriptFile=/usr/share/plymouth/themes/big/big.script

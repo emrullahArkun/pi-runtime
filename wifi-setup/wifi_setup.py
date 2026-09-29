@@ -17,6 +17,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 
 IFACE = os.environ.get("WIFI_IFACE", "wlan0")
 RUN_DIR = Path(os.environ.get("RUN_DIR", "/run/big-wifi-setup"))
@@ -380,7 +381,28 @@ class Setup:
         self.done = True
 
 
-def make_handler(setup):
+class Starting:
+    """Answers the TV page while the Pi decides whether it needs the setup at all."""
+
+    def public_state(self):
+        try:
+            step = (RUN_DIR / "state").read_text().strip() or "checking"
+        except OSError:
+            step = "checking"
+        return {"step": step, "notice": None, "pageFallback": False}
+
+    def public_networks(self):
+        return []
+
+    def mark_page_seen(self):
+        pass
+
+    def request_connect(self, ssid, password):
+        return "busy"
+
+
+def make_handler(current):
+    """current.setup is Starting until the setup begins, then the Setup session."""
     seen = set()
 
     class Handler(BaseHTTPRequestHandler):
@@ -437,12 +459,12 @@ def make_handler(setup):
             if path in ("/", "/phone.html"):
                 if self._from_phone():
                     self._note("loaded the setup page")
-                    setup.mark_page_seen()
+                    current.setup.mark_page_seen()
                 return self._file(WEB_DIR / "phone.html")
             if path == "/api/state":
-                return self._json(setup.public_state())
+                return self._json(current.setup.public_state())
             if path == "/api/networks":
-                return self._json(setup.public_networks())
+                return self._json(current.setup.public_networks())
             if path in ("/qr/wifi.svg", "/qr/page.svg"):
                 return self._file(RUN_DIR / path.lstrip("/"))
             if path.lstrip("/") in STATIC:
@@ -460,7 +482,7 @@ def make_handler(setup):
                 ssid, password = str(body["ssid"]), str(body.get("password") or "")
             except (ValueError, KeyError, TypeError):
                 return self._json({"error": "bad request"}, 400)
-            error = setup.request_connect(ssid, password)
+            error = current.setup.request_connect(ssid, password)
             self._json({"error": error} if error else {"ok": True}, 400 if error else 200)
 
     return Handler
@@ -545,8 +567,11 @@ def wait_for_network(net, home_wifi=frozenset(), clock=time.monotonic, sleep=tim
 
 
 def main():
-    started = time.monotonic()
     write_state("checking")
+    # kiosk.sh opens the TV page right away; it shows a boot screen until the decision.
+    current = SimpleNamespace(setup=Starting())
+    server = ThreadingHTTPServer(("", PORT), make_handler(current))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
     net = Network()
     net.unblock()
     for _ in range(30):
@@ -557,6 +582,7 @@ def main():
     if not Path(f"/sys/class/net/{IFACE}").exists():
         log(f"no {IFACE}, nothing to set up")
         write_state("online")
+        time.sleep(3)  # the TV page moves on to the kiosk
         return
 
     home_wifi = read_home_wifi()
@@ -565,6 +591,7 @@ def main():
         log("online")
         write_state("online")
         restart_wireguard(only_if_failed=True)
+        time.sleep(3)  # the TV page moves on to the kiosk
         return
 
     notice, saved = decision
@@ -574,13 +601,10 @@ def main():
     setup = Setup(net, notice=notice, saved=saved, home_wifi=home_wifi)
     write_qr_codes(ssid, password)
     setup.start(ssid, password)
-    server = ThreadingHTTPServer(("", PORT), make_handler(setup))
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-
-    # kiosk.sh waits for the first decision; later setups need the TV switched over.
-    was_waiting = saved or time.monotonic() - started > 55
+    current.setup = setup
     write_state("setup")
-    if was_waiting:
+    # While a saved Wi-Fi was awaited the TV went on to the kiosk; bring it back.
+    if saved:
         restart_kiosk()
 
     while not setup.done:

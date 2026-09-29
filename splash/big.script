@@ -1,0 +1,30 @@
+# Same look as the TV setup page (wifi-setup/web/tv.html): the BIG mark on white with a
+# ring turning around it. Sizes are design pixels of a 1920x1080 screen.
+Window.SetBackgroundTopColor(1, 1, 1);
+Window.SetBackgroundBottomColor(1, 1, 1);
+
+scale = Window.GetHeight() / 1080;
+ring_size = 640 * scale;
+
+logo_image = Image("logo.png");
+logo_image = logo_image.Scale(380 * scale, 380 * scale * logo_image.GetHeight() / logo_image.GetWidth());
+track_image = Image("track.png").Scale(ring_size, ring_size);
+arc_image = Image("ring.png").Scale(ring_size, ring_size);
+
+center_x = Window.GetX() + Window.GetWidth() / 2;
+center_y = Window.GetY() + Window.GetHeight() / 2;
+
+track = Sprite(track_image);
+track.SetPosition(center_x - ring_size / 2, center_y - ring_size / 2, 1);
+arc = Sprite(arc_image);
+arc.SetPosition(center_x - ring_size / 2, center_y - ring_size / 2, 2);
+logo = Sprite(logo_image);
+logo.SetPosition(center_x - logo_image.GetWidth() / 2, center_y - logo_image.GetHeight() / 2, 3);
+
+# One turn in 1.2 s at 50 frames per second.
+angle = 0;
+fun refresh_callback() {
+  angle = angle + Math.Pi / 30;
+  arc.SetImage(arc_image.Rotate(angle));
+}
+Plymouth.SetRefreshFunction(refresh_callback);

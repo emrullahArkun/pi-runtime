@@ -102,6 +102,17 @@ own() {
 
 if [ "$DO_INSTALL" = "1" ]; then
 
+# Before any kernel update: the image's MODULES=dep picks the drivers of the machine that
+# builds the initramfs (the laptop in the image build) and leaves out the display driver
+# the boot screen needs.
+INITRAMFS_CONF=/etc/initramfs-tools/conf.d/big-kiosk.conf
+REBUILD_INITRAMFS=0
+if [ "$(cat "$INITRAMFS_CONF" 2>/dev/null)" != "MODULES=most" ]; then
+  sudo install -d -m 0755 /etc/initramfs-tools/conf.d
+  echo "MODULES=most" | sudo tee "$INITRAMFS_CONF" > /dev/null
+  REBUILD_INITRAMFS=1
+fi
+
 # --- System updaten ---
 if [ "$UPDATE" = "0" ]; then
   echo "[1/8] System updaten..."
@@ -122,7 +133,7 @@ ensure_packages \
   chromium \
   cog \
   libwpebackend-fdo-1.0-1 \
-  fonts-noto \
+  fonts-noto-core \
   fonts-noto-color-emoji \
   grim \
   v4l-utils
@@ -236,7 +247,7 @@ sudo mkdir -p /etc/systemd/system/getty@tty1.service.d
 sudo tee /etc/systemd/system/getty@tty1.service.d/autologin.conf > /dev/null << EOF
 [Service]
 ExecStart=
-ExecStart=-/sbin/agetty --autologin $USERNAME --noclear %I \$TERM
+ExecStart=-/sbin/agetty --autologin $USERNAME --noclear --noissue %I \$TERM
 Type=idle
 EOF
 
@@ -253,6 +264,36 @@ fi
 EOF
 fi
 own "$PROFILE"
+# No login text between the boot screen and the kiosk.
+touch "$USERHOME/.hushlogin"
+own "$USERHOME/.hushlogin"
+
+# --- Boot screen (Plymouth) instead of boot messages ---
+# Same look as the TV setup page. plymouth-quit keeps the last frame until cage takes over
+# the screen, so the TV goes from the boot screen straight to the setup page or the kiosk.
+echo "[+] Startbildschirm..."
+ensure_packages plymouth
+THEME_DIR=/usr/share/plymouth/themes/big
+THEME_BEFORE="$(cat "$THEME_DIR"/* 2>/dev/null | sha256sum)"
+sudo install -d -m 0755 "$THEME_DIR"
+sudo install -m 0644 "$SCRIPT_DIR"/splash/big.plymouth "$SCRIPT_DIR"/splash/big.script \
+  "$SCRIPT_DIR"/splash/ring.png "$SCRIPT_DIR"/splash/track.png "$THEME_DIR/"
+sudo install -m 0644 "$SCRIPT_DIR/wifi-setup/web/big-mark.png" "$THEME_DIR/logo.png"
+if [ "$THEME_BEFORE" != "$(cat "$THEME_DIR"/* | sha256sum)" ] || [ "$(plymouth-set-default-theme)" != "big" ]; then
+  sudo plymouth-set-default-theme big
+  REBUILD_INITRAMFS=1
+fi
+for flag in quiet splash plymouth.ignore-serial-consoles loglevel=3 logo.nologo vt.global_cursor_default=0; do
+  grep -qE "(^| )${flag}( |\$)" /boot/firmware/cmdline.txt || sudo sed -i "1 s/\$/ ${flag}/" /boot/firmware/cmdline.txt
+done
+grep -q "^disable_splash=" /boot/firmware/config.txt || echo "disable_splash=1" | sudo tee -a /boot/firmware/config.txt > /dev/null
+sudo install -d -m 0755 /etc/systemd/system/plymouth-quit.service.d
+printf '[Service]\nExecStart=\nExecStart=-/usr/bin/plymouth quit --retain-splash\n' \
+  | sudo tee /etc/systemd/system/plymouth-quit.service.d/retain-splash.conf > /dev/null
+if [ "$REBUILD_INITRAMFS" = "1" ]; then
+  echo "  -> initramfs neu bauen (dauert)..."
+  sudo update-initramfs -u -k all
+fi
 
 # The first-boot wizard of Raspberry Pi OS would ask on tty8 to rename the user.
 sudo systemctl disable userconfig.service 2>/dev/null || true

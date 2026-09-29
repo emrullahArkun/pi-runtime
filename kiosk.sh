@@ -38,22 +38,21 @@ if [ -z "${KID:-}" ] && [ -f /boot/firmware/fleet-enrollment.txt ]; then
   KIOSK_URL="${KIOSK_URL}&enrolling=1"
 fi
 
-# Wi-Fi setup (wifi-setup/): while it runs the TV shows its local page, which returns
-# to the kiosk once connected. Without the service this is the plain kiosk as before.
+# Wi-Fi setup (wifi-setup/): while its service decides or runs, the TV shows its local
+# page (boot screen, then the setup), which moves on to the kiosk by itself. Without the
+# service this is the plain kiosk as before.
 START_URL="$KIOSK_URL"
 if [ -f /etc/systemd/system/big-wifi-setup.service ]; then
-  SETUP_STATE=""
-  # Up to a minute: without Wi-Fi in reach the service decides within ~45 s.
-  for _ in $(seq 1 60); do
-    SETUP_STATE="$(cat /run/big-wifi-setup/state 2>/dev/null || true)"
-    [ -n "$SETUP_STATE" ] && [ "$SETUP_STATE" != "checking" ] && break
+  for _ in $(seq 1 20); do
+    [ "$(cat /run/big-wifi-setup/state 2>/dev/null || true)" = "online" ] && break
+    if curl -fsS -o /dev/null --max-time 1 http://127.0.0.1/api/state 2>/dev/null; then
+      NEXT="$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$KIOSK_URL")"
+      START_URL="http://127.0.0.1/tv.html?next=${NEXT}"
+      echo "WLAN-Setup-Seite -> $START_URL"
+      break
+    fi
     sleep 1
   done
-  if [ "$SETUP_STATE" = "setup" ]; then
-    NEXT="$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$KIOSK_URL")"
-    START_URL="http://127.0.0.1/tv.html?next=${NEXT}"
-    echo "WLAN-Setup aktiv -> $START_URL"
-  fi
 fi
 
 # Right after boot switch the TV to this HDMI input (if it is on and speaks CEC).

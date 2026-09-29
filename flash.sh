@@ -83,6 +83,21 @@ if [ -n "$IMAGE" ]; then
   echo "Schreibe $(basename "$IMAGE") auf $DEVICE ..."
   xzcat "$IMAGE" | dd of="$DEVICE" bs=4M oflag=direct conv=fsync status=progress
   sync
+  # Read everything back past the page cache: a broken or fake card fails here, at home.
+  echo "Pruefe die Karte (liest alles zurueck)..."
+  IMAGE_BYTES="$(xz --robot --list "$IMAGE" | awk '$1 == "totals" { print $5 }')"
+  WANT_FILE="$(mktemp)"
+  xzcat "$IMAGE" | sha256sum > "$WANT_FILE" &
+  GOT="$(dd if="$DEVICE" bs=4M iflag=direct,count_bytes count="$IMAGE_BYTES" status=none | sha256sum)"
+  wait
+  WANT="$(cat "$WANT_FILE")"
+  rm -f "$WANT_FILE"
+  if [ "${GOT%% *}" != "${WANT%% *}" ]; then
+    echo "FEHLER: Die Karte liefert andere Daten zurueck als geschrieben."
+    echo "        Karte defekt oder gefaelscht, bitte eine andere nehmen."
+    exit 1
+  fi
+  echo "  Karte geprueft."
   partprobe "$DEVICE" 2>/dev/null || blockdev --rereadpt "$DEVICE" || true
   udevadm settle 2>/dev/null || true
   for _ in $(seq 1 20); do
