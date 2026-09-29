@@ -51,6 +51,9 @@ SCAN_EVERY_S = 30
 RETRY_SAVED_S = 300
 PAGE_FALLBACK_S = 15
 CONNECTED_HOLD_S = 5
+# After the decision the page server stays up this long: the kiosk may restart right then
+# (enrollment) and must not find port 80 closed.
+LINGER_S = 60
 AP_CHECK_S = 10
 PASSWORD_CHARS = "abcdefghjkmnpqrstuvwxyz23456789"
 
@@ -582,7 +585,7 @@ def main():
     if not Path(f"/sys/class/net/{IFACE}").exists():
         log(f"no {IFACE}, nothing to set up")
         write_state("online")
-        time.sleep(3)  # the TV page moves on to the kiosk
+        time.sleep(LINGER_S)
         return
 
     home_wifi = read_home_wifi()
@@ -591,7 +594,7 @@ def main():
         log("online")
         write_state("online")
         restart_wireguard(only_if_failed=True)
-        time.sleep(3)  # the TV page moves on to the kiosk
+        time.sleep(LINGER_S)
         return
 
     notice, saved = decision
@@ -611,11 +614,11 @@ def main():
         setup.tick()
         time.sleep(1)
 
-    server.shutdown()
+    write_state("online")
     net.remove_ap()
     log("setup finished")
-    write_state("online")
     restart_wireguard(only_if_failed=False)
+    time.sleep(LINGER_S)
 
 
 if __name__ == "__main__":
