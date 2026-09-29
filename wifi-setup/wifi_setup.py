@@ -43,6 +43,10 @@ LAN_GRACE_S = 15
 HOME_WIFI_GRACE_S = 45
 SAVED_WAIT_S = 600
 SAVED_TRY_AFTER_S = 60
+# A saved Wi-Fi that is not even visible is elsewhere (set up at home), not a router still
+# booting after a power cut: those are back within a few minutes.
+MISSING_WAIT_S = 180
+SCAN_EVERY_S = 30
 RETRY_SAVED_S = 300
 PAGE_FALLBACK_S = 15
 CONNECTED_HOLD_S = 5
@@ -517,14 +521,20 @@ def wait_for_network(net, home_wifi=frozenset(), clock=time.monotonic, sleep=tim
         return (None, saved)
     write_state("waiting")
     tried = False
+    last_scan = None
     while clock() - start < SAVED_WAIT_S:
         if net.ethernet_up() or net.wifi_up():
             return None
-        if not tried and clock() - start >= SAVED_TRY_AFTER_S:
-            tried = True
+        waited = clock() - start
+        if waited >= SAVED_TRY_AFTER_S and (last_scan is None or clock() - last_scan >= SCAN_EVERY_S):
+            last_scan = clock()
             visible = {n["ssid"] for n in net.scan()}
-            for name, ssid in saved:
-                if ssid in visible:
+            in_reach = [name for name, ssid in saved if ssid in visible]
+            if not in_reach and waited >= MISSING_WAIT_S:
+                return ("lost", saved)
+            if in_reach and not tried:
+                tried = True
+                for name in in_reach:
                     ok, reason = net.activate(name)
                     if ok:
                         return None
