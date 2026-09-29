@@ -248,8 +248,12 @@ done
 
 # --- Autologin auf tty1 einrichten ---
 echo "[8/8] Autologin auf tty1 + Kiosk-Autostart..."
+# Not autologin.conf: raspi-config owns that name, and cloud-init's user rename on the first
+# start of a gold image runs it (cancel-rename, "console without autologin"). Drop-ins apply
+# in name order, so this one wins either way.
 sudo mkdir -p /etc/systemd/system/getty@tty1.service.d
-sudo tee /etc/systemd/system/getty@tty1.service.d/autologin.conf > /dev/null << EOF
+sudo rm -f /etc/systemd/system/getty@tty1.service.d/autologin.conf
+sudo tee /etc/systemd/system/getty@tty1.service.d/zz-kiosk-autologin.conf > /dev/null << EOF
 [Service]
 ExecStart=
 ExecStart=-/sbin/agetty --autologin $USERNAME --noclear --noissue %I \$TERM
