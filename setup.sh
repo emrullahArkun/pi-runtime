@@ -500,6 +500,15 @@ if [ "$FLEET_ENABLED" = "1" ] && [ "$UPDATE" = "0" ]; then
     echo "  wg_ip:           $WG_IP"
     echo "  server_endpoint: $SERVER_ENDPOINT"
 
+    # The kiosk shows a waiting screen until it knows its id (kiosk.sh).
+    KIOSK_ID="$(echo "$REG_RESP" | jq -r '.kiosk_id // empty')"
+    if [ -n "$KIOSK_ID" ]; then
+      sudo install -d -m 0755 /etc/fleet
+      echo "$KIOSK_ID" | sudo tee /etc/fleet/kiosk-id > /dev/null
+      sudo chmod 0644 /etc/fleet/kiosk-id
+      sudo pkill -SIGHUP -x cage || sudo pkill -SIGHUP -x cog || true
+    fi
+
     echo "  -> /etc/wireguard/wg0.conf schreiben..."
     sudo tee /etc/wireguard/wg0.conf > /dev/null << EOF
 # Auto-generiert von setup.sh — nicht manuell editieren.

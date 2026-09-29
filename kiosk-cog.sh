@@ -25,6 +25,11 @@ if [ -r /etc/fleet/kiosk-id ]; then
   KID="$(tr -d '[:space:]' < /etc/fleet/kiosk-id 2>/dev/null || true)"
   [ -n "$KID" ] && KIOSK_URL="${KIOSK_BASE_URL}/?kiosk=1&kid=${KID}"
 fi
+# Not enrolled yet (fresh gold image): a waiting screen instead of a pairing QR code for
+# the wrong kiosk; the heartbeat restarts the kiosk once the id is there.
+if [ -z "${KID:-}" ] && [ -f /boot/firmware/fleet-enrollment.txt ]; then
+  KIOSK_URL="${KIOSK_URL}&enrolling=1"
+fi
 
 COG_BIN="$(command -v cog)"
 if [ -z "$COG_BIN" ]; then

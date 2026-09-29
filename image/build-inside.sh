@@ -87,7 +87,13 @@ rm -f "$MNT/usr/sbin/policy-rc.d" "$MNT/etc/resolv.conf"
 [ -n "$RESOLV_BACKUP" ] && mv "$RESOLV_BACKUP" "$MNT/etc/resolv.conf"
 rm -rf "$MNT"/var/lib/apt/lists/* "$MNT"/tmp/* "$MNT"/var/tmp/* "$MNT"/root/.bash_history
 rm -f "$MNT"/etc/ssh/ssh_host_*
+# Empty, not "uninitialized": that would make the first start a systemd first boot,
+# whose preset-all re-enables units setup.sh disabled (the user rename wizard).
 : > "$MNT/etc/machine-id"
+# Without a real-time clock the Pi starts with this time until it reaches NTP; much older
+# and HTTPS certificates would not be valid yet.
+install -d "$MNT/var/lib/systemd/timesync"
+touch "$MNT/var/lib/systemd/timesync/clock"
 [ -L "$MNT/var/lib/dbus/machine-id" ] || rm -f "$MNT/var/lib/dbus/machine-id"
 find "$MNT/var/log" -type f -exec truncate -s 0 {} +
 fstrim "$MNT" 2>/dev/null || true
