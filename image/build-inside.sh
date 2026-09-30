@@ -84,6 +84,7 @@ grep -q -- "--skip-login" "$MNT/etc/systemd/system/getty@tty1.service.d/zz-kiosk
 grep -q "brcmfmac.feature_disable=0x2282000" "$MNT/boot/firmware/cmdline.txt" || { echo "FEHLER: WLAN-Treiber-Parameter fehlt."; exit 1; }
 grep -q "console=tty3" "$MNT/boot/firmware/cmdline.txt" || { echo "FEHLER: Konsole liegt noch auf dem Fernseher."; exit 1; }
 # The boot screen needs the Pi 4 initramfs with MODULES=most and the theme inside.
+ls "$MNT"/usr/lib/*/plymouth/two-step.so > /dev/null 2>&1 || { echo "FEHLER: Plymouth-Plugin two-step fehlt."; exit 1; }
 grep -qx "MODULES=most" "$MNT/etc/initramfs-tools/conf.d/big-kiosk.conf" \
   && chroot "$MNT" sh -c 'lsinitramfs /boot/initrd.img-*-v8 | grep -q "plymouth/themes/big/throbber-0035.png"' \
   || { echo "FEHLER: Startbildschirm fehlt im initramfs."; exit 1; }

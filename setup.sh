@@ -283,7 +283,7 @@ own "$USERHOME/.hushlogin"
 # plugin plays the ring as a sequence of images; the script plugin crashed in
 # ply_pixel_display_draw_area and left its dump on the TV.
 echo "[+] Startbildschirm..."
-ensure_packages plymouth
+ensure_packages plymouth plymouth-themes
 THEME_DIR=/usr/share/plymouth/themes/big
 THEME_BEFORE="$(cat "$THEME_DIR"/* 2>/dev/null | sha256sum)"
 sudo rm -rf "$THEME_DIR"
