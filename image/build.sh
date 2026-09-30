@@ -4,8 +4,8 @@
 # enrollment come from provision-pi.sh). Result in the cache, where provision-pi.sh
 # picks it up:  ~/.cache/big-kiosk/big-kiosk-<date>.img.xz (+ .sha256)
 #
-# Runs on the laptop in Docker (privileged, for the loop devices), 20-40 min.
-# Needs ARM emulation once:  docker run --privileged --rm tonistiigi/binfmt --install arm64
+# Runs on the laptop in Docker (privileged, for the loop devices), 20-40 min. Registers the
+# ARM emulation itself when it is missing (it does not survive a reboot of the laptop).
 
 set -euo pipefail
 
@@ -16,9 +16,8 @@ BUILDER_IMAGE="debian:trixie-slim"
 . "$SCRIPT_DIR/os-image.sh"
 
 if [ ! -e /proc/sys/fs/binfmt_misc/qemu-aarch64 ]; then
-  echo "FEHLER: ARM-Emulation fehlt. Einmal ausfuehren:"
-  echo "  docker run --privileged --rm tonistiigi/binfmt --install arm64"
-  exit 1
+  echo "[0/3] ARM-Emulation einrichten..."
+  docker run --privileged --rm tonistiigi/binfmt --install arm64 > /dev/null
 fi
 
 echo "[1/3] Raspberry Pi OS pruefen..."
