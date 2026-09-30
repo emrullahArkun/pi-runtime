@@ -542,14 +542,22 @@ if [ "$FLEET_ENABLED" = "1" ] && [ "$UPDATE" = "0" ]; then
       --arg pubkey "$PUB_KEY" \
       '{enrollment_token: $token, cpu_serial: $serial, wg_pubkey: $pubkey}')"
 
-    REG_RESP="$(curl -fsS -X POST \
+    REG_RESP="$(curl -sS --max-time 30 -w '\n%{http_code}' -X POST \
       -H "Content-Type: application/json" \
       -d "$REG_PAYLOAD" \
       "$FLEET_API_URL/pi/register" 2>&1)" || {
-        echo "FEHLER: Registrierung fehlgeschlagen:"
+        echo "FEHLER: Server nicht erreichbar:"
         echo "$REG_RESP"
         exit 1
       }
+    REG_CODE="${REG_RESP##*$'\n'}"
+    REG_RESP="${REG_RESP%$'\n'*}"
+    if [ "$REG_CODE" != "200" ]; then
+      # The server says why (token used or expired, hardware registered as another Pi).
+      echo "FEHLER: Registrierung abgelehnt (HTTP $REG_CODE):"
+      echo "$REG_RESP" | jq -r '.error, (.hint // empty)' 2>/dev/null || echo "$REG_RESP"
+      exit 1
+    fi
 
     WG_IP="$(echo "$REG_RESP" | jq -r '.wg_ip')"
     SERVER_PUBKEY="$(echo "$REG_RESP" | jq -r '.server_pubkey')"

@@ -11,6 +11,9 @@
 # Usage:
 #   ./provision-pi.sh [--name merkez] [--device /dev/sdX] [--ssh-key ~/.ssh/id_ed25519.pub]
 #                     [--ssid WLAN --psk pw] [--image os.img.xz] [--official] [--no-os]
+#                     [--replace 3]
+#   --replace   number(s) of the Pi this card replaces (same hardware set up again, "2 3");
+#               their slots are deleted, the server registers each hardware only once
 #   --official  Raspberry Pi OS instead of the gold image (installs on the first start)
 #   --no-os     the card was already flashed with the Imager (old way): only adds the
 #               enrollment and the first-boot bootstrap.
@@ -35,6 +38,7 @@ SSH_KEY="$HOME/.ssh/id_ed25519.pub"
 IMAGE=""
 WRITE_OS=1
 OFFICIAL=0
+REPLACE=""
 
 usage() {
   sed -n '2,/^set -euo pipefail/p' "$0" | head -n -1 | sed 's/^# \?//'
@@ -51,6 +55,7 @@ while [ $# -gt 0 ]; do
     --image)   IMAGE="$2"; shift 2 ;;
     --no-os)   WRITE_OS=0; shift ;;
     --official) OFFICIAL=1; shift ;;
+    --replace) REPLACE="$2"; shift 2 ;;
     --config)  CONF="$2"; shift 2 ;;
     -h|--help) usage ;;
     *)         echo "Unbekanntes Argument: $1"; usage ;;
@@ -154,6 +159,35 @@ if [ -z "$SSID" ]; then
   fi
 fi
 
+# --- Replaced Pi ---
+# The server registers each hardware once: a Pi set up again (new card, maybe a new name)
+# needs its old slot gone, or it keeps getting "CPU serial already registered".
+echo
+echo "Plaetze auf dem Server pruefen..."
+# "id name" per Pi, from lines like "#  3  10.10.0.3  registered  merkez  serial=...".
+PI_SLOTS="$(ssh "$VPS_ALIAS" "sudo fleet manage-pis list" | awk '/^#/ {
+  sub(/^#/, ""); n = ""; for (i = 4; i <= NF && $i !~ /^serial=/; i++) n = n (n ? " " : "") $i; print $1, n }')"
+slot_name() { printf '%s\n' "$PI_SLOTS" | awk -v id="$1" '$1 == id { sub(/^[0-9]+ /, ""); print; exit }'; }
+if [ -z "$REPLACE" ] && [ -n "$PI_SLOTS" ]; then
+  SAME_NAME="$(printf '%s\n' "$PI_SLOTS" | awk -v name="$NAME" '{ id = $1; sub(/^[0-9]+ /, "") } $0 == name { print id; exit }')"
+  echo "  Vorhandene Pis:"
+  printf '%s\n' "$PI_SLOTS" | sed 's/^\([0-9]*\) /    #\1  /'
+  echo "  Ersetzt diese Karte einen oder mehrere davon (gleicher Pi, neu aufgesetzt)?"
+  if [ -n "$SAME_NAME" ]; then
+    REPLACE="$(ask "  Nummern mit Leerzeichen, Enter = #$SAME_NAME (gleicher Name), - = keiner: ")"
+    REPLACE="${REPLACE:-$SAME_NAME}"
+  else
+    REPLACE="$(ask "  Nummern mit Leerzeichen, Enter = keiner (neuer Pi): ")"
+  fi
+  if [ "$REPLACE" = "-" ]; then REPLACE=""; fi
+fi
+for id in $REPLACE; do
+  if [ -z "$(slot_name "$id")" ]; then
+    echo "FEHLER: Es gibt keinen Pi #$id."
+    exit 1
+  fi
+done
+
 # --- Summary ---
 echo
 echo "=== Zusammenfassung ==="
@@ -170,6 +204,9 @@ else
   echo "  System:      schon vom Imager geschrieben (--no-os)"
 fi
 echo "  WLAN:        ${SSID:-keins, erster Start per LAN-Kabel}"
+for id in $REPLACE; do
+  echo "  Ersetzt:     #$id $(slot_name "$id") (alter Platz wird geloescht)"
+done
 echo "  Server:      $VPS_ALIAS"
 echo
 if [ "$WRITE_OS" = "1" ]; then
@@ -224,15 +261,9 @@ fi
 # --- Slot on the server ---
 echo
 echo "[2/4] Platz auf dem Server anlegen..."
-EXISTING="$(ssh "$VPS_ALIAS" "sudo fleet manage-pis list" | awk -v name="$NAME" '
-  { sub(/^#/, ""); n = ""; for (i = 4; i <= NF && $i !~ /^serial=/; i++) n = n (n ? " " : "") $i; if (n == name) print $1 }')"
-for id in $EXISTING; do
-  echo "  Es gibt schon einen Pi '$NAME' (#$id). Derselbe Pi kann sich sonst nicht neu anmelden."
-  if confirm "  Alten Platz #$id loeschen?"; then
-    ssh "$VPS_ALIAS" "sudo fleet manage-pis remove $id"
-  else
-    echo "Abgebrochen."; exit 1
-  fi
+for id in $REPLACE; do
+  echo "  Alten Platz #$id loeschen..."
+  ssh "$VPS_ALIAS" "sudo fleet manage-pis remove $id"
 done
 ADD_OUT="$(ssh "$VPS_ALIAS" "sudo fleet manage-pis add \"$NAME\"")"
 TOKEN="$(printf '%s\n' "$ADD_OUT" | awk '/enrollment_token:/ {print $2; exit}' | tr -d '[:space:]')"
