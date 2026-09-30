@@ -279,16 +279,16 @@ touch "$USERHOME/.hushlogin"
 own "$USERHOME/.hushlogin"
 
 # --- Boot screen (Plymouth) instead of boot messages ---
-# Same look as the TV setup page. plymouth-quit keeps the last frame until cage takes over
-# the screen, so the TV goes from the boot screen straight to the setup page or the kiosk.
+# Same look as the TV setup page, which takes over once the browser is up. The two-step
+# plugin plays the ring as a sequence of images; the script plugin crashed in
+# ply_pixel_display_draw_area and left its dump on the TV.
 echo "[+] Startbildschirm..."
 ensure_packages plymouth
 THEME_DIR=/usr/share/plymouth/themes/big
 THEME_BEFORE="$(cat "$THEME_DIR"/* 2>/dev/null | sha256sum)"
+sudo rm -rf "$THEME_DIR"
 sudo install -d -m 0755 "$THEME_DIR"
-sudo install -m 0644 "$SCRIPT_DIR"/splash/big.plymouth "$SCRIPT_DIR"/splash/big.script \
-  "$SCRIPT_DIR"/splash/ring.png "$SCRIPT_DIR"/splash/track.png "$THEME_DIR/"
-sudo install -m 0644 "$SCRIPT_DIR/wifi-setup/web/big-mark.png" "$THEME_DIR/logo.png"
+sudo install -m 0644 "$SCRIPT_DIR"/splash/big.plymouth "$SCRIPT_DIR"/splash/*.png "$THEME_DIR/"
 if [ "$THEME_BEFORE" != "$(cat "$THEME_DIR"/* | sha256sum)" ] || [ "$(plymouth-set-default-theme)" != "big" ]; then
   sudo plymouth-set-default-theme big
   REBUILD_INITRAMFS=1
@@ -304,9 +304,7 @@ for flag in quiet splash plymouth.ignore-serial-consoles loglevel=3 logo.nologo 
   grep -qE "(^| )${flag}( |\$)" /boot/firmware/cmdline.txt || sudo sed -i "1 s/\$/ ${flag}/" /boot/firmware/cmdline.txt
 done
 grep -q "^disable_splash=" /boot/firmware/config.txt || echo "disable_splash=1" | sudo tee -a /boot/firmware/config.txt > /dev/null
-sudo install -d -m 0755 /etc/systemd/system/plymouth-quit.service.d
-printf '[Service]\nExecStart=\nExecStart=-/usr/bin/plymouth quit --retain-splash\n' \
-  | sudo tee /etc/systemd/system/plymouth-quit.service.d/retain-splash.conf > /dev/null
+sudo rm -f /etc/systemd/system/plymouth-quit.service.d/retain-splash.conf
 if [ "$REBUILD_INITRAMFS" = "1" ]; then
   echo "  -> initramfs neu bauen (dauert)..."
   sudo update-initramfs -u -k all

@@ -85,7 +85,7 @@ grep -q "brcmfmac.feature_disable=0x2282000" "$MNT/boot/firmware/cmdline.txt" ||
 grep -q "console=tty3" "$MNT/boot/firmware/cmdline.txt" || { echo "FEHLER: Konsole liegt noch auf dem Fernseher."; exit 1; }
 # The boot screen needs the Pi 4 initramfs with MODULES=most and the theme inside.
 grep -qx "MODULES=most" "$MNT/etc/initramfs-tools/conf.d/big-kiosk.conf" \
-  && chroot "$MNT" sh -c 'lsinitramfs /boot/initrd.img-*-v8 | grep -q "plymouth/themes/big/big.script"' \
+  && chroot "$MNT" sh -c 'lsinitramfs /boot/initrd.img-*-v8 | grep -q "plymouth/themes/big/throbber-0035.png"' \
   || { echo "FEHLER: Startbildschirm fehlt im initramfs."; exit 1; }
 install -d "$MNT/var/lib/kiosk-update"
 echo "$RUNTIME_COMMIT" > "$MNT/var/lib/kiosk-update/applied"
