@@ -128,16 +128,12 @@ def new_password(length=10):
 
 
 def setup_password():
-    """One password per Pi: a phone that saved the setup Wi-Fi keeps working."""
-    path = STATE_DIR / "ap-password"
-    try:
-        saved = path.read_text().strip()
-        if len(saved) >= 8:
-            return saved
-    except OSError:
-        pass
+    """A new password, and so a new name, on every start: a phone that once failed to join
+    ignores that name for good, so switching the Pi off and on gets it a fresh network.
+    Kept in the state directory for troubleshooting."""
     password = new_password()
     STATE_DIR.mkdir(parents=True, exist_ok=True)
+    path = STATE_DIR / "ap-password"
     path.write_text(password + "\n")
     path.chmod(0o600)
     return password
