@@ -11,9 +11,12 @@
 # Usage:
 #   ./provision-pi.sh [--name merkez] [--device /dev/sdX] [--ssh-key ~/.ssh/id_ed25519.pub]
 #                     [--ssid WLAN --psk pw] [--image os.img.xz] [--official] [--no-os]
-#                     [--replace 3]
-#   --replace   number(s) of the Pi this card replaces (same hardware set up again, "2 3");
-#               their slots are deleted, the server registers each hardware only once
+#                     [--replace 3] [--take-over 3] [--prayer-room]
+#   --replace     number(s) of the Pi this card replaces (same hardware set up again, "2 3");
+#                 their slots are deleted, the server registers each hardware only once
+#   --take-over   number of a replaced Pi in the same mosque: its settings and the phone's
+#                 write rights carry over, the screen needs no new pairing scan
+#   --prayer-room prayer room display (no images or flyers), set before it is ever online
 #   --official  Raspberry Pi OS instead of the gold image (installs on the first start)
 #   --no-os     the card was already flashed with the Imager (old way): only adds the
 #               enrollment and the first-boot bootstrap.
@@ -39,6 +42,8 @@ IMAGE=""
 WRITE_OS=1
 OFFICIAL=0
 REPLACE=""
+TAKE_OVER=""
+PRAYER_ROOM=""
 
 usage() {
   sed -n '2,/^set -euo pipefail/p' "$0" | head -n -1 | sed 's/^# \?//'
@@ -56,6 +61,8 @@ while [ $# -gt 0 ]; do
     --no-os)   WRITE_OS=0; shift ;;
     --official) OFFICIAL=1; shift ;;
     --replace) REPLACE="$2"; shift 2 ;;
+    --take-over) TAKE_OVER="$2"; shift 2 ;;
+    --prayer-room) PRAYER_ROOM=1; shift ;;
     --config)  CONF="$2"; shift 2 ;;
     -h|--help) usage ;;
     *)         echo "Unbekanntes Argument: $1"; usage ;;
@@ -165,9 +172,14 @@ fi
 echo
 echo "Plaetze auf dem Server pruefen..."
 # "id name" per Pi, from lines like "#  3  10.10.0.3  registered  merkez  serial=...".
-PI_SLOTS="$(ssh "$VPS_ALIAS" "sudo fleet manage-pis list" | awk '/^#/ {
+SLOT_LIST="$(ssh "$VPS_ALIAS" "sudo fleet manage-pis list")"
+PI_SLOTS="$(printf '%s\n' "$SLOT_LIST" | awk '/^#/ {
   sub(/^#/, ""); n = ""; for (i = 4; i <= NF && $i !~ /^serial=/; i++) n = n (n ? " " : "") $i; print $1, n }')"
 slot_name() { printf '%s\n' "$PI_SLOTS" | awk -v id="$1" '$1 == id { sub(/^[0-9]+ /, ""); print; exit }'; }
+slot_kiosk() {
+  printf '%s\n' "$SLOT_LIST" | awk -v id="$1" '/^#/ { sub(/^#/, "") } $1 == id {
+    for (i = 1; i <= NF; i++) if ($i ~ /^kiosk=/) { v = substr($i, 7); if (v != "-") print v; exit } }'
+}
 if [ -z "$REPLACE" ] && [ -n "$PI_SLOTS" ]; then
   SAME_NAME="$(printf '%s\n' "$PI_SLOTS" | awk -v name="$NAME" '{ id = $1; sub(/^[0-9]+ /, "") } $0 == name { print id; exit }')"
   echo "  Vorhandene Pis:"
@@ -188,6 +200,33 @@ for id in $REPLACE; do
   fi
 done
 
+# --- Display settings ---
+# The profile lives on the server, so it can be set before the Pi is ever online.
+if [ -z "$TAKE_OVER" ]; then
+  WITH_PROFILE=""
+  for id in $REPLACE; do
+    if [ -n "$(slot_kiosk "$id")" ]; then WITH_PROFILE="$WITH_PROFILE #$id"; fi
+  done
+  if [ -n "$WITH_PROFILE" ]; then
+    echo
+    echo "  Kommt die Karte in dieselbe Moschee wie einer der ersetzten Pis ($WITH_PROFILE ),"
+    echo "  uebernimmt sie dessen Einstellungen und Handy-Rechte, ohne neuen QR-Scan."
+    TAKE_OVER="$(ask "  Nummer, Enter = nein (vor Ort neu einrichten): ")"
+    TAKE_OVER="${TAKE_OVER#\#}"
+  fi
+fi
+TAKE_OVER_KIOSK=""
+if [ -n "$TAKE_OVER" ]; then
+  TAKE_OVER_KIOSK="$(slot_kiosk "$TAKE_OVER")"
+  if [ -z "$TAKE_OVER_KIOSK" ]; then
+    echo "FEHLER: Pi #$TAKE_OVER hat keine Einstellungen zum Uebernehmen."
+    exit 1
+  fi
+elif [ -z "$PRAYER_ROOM" ]; then
+  echo
+  if confirm "Gebetsraum (keine Bilder oder Flyer, nur Termine und Hadis)?"; then PRAYER_ROOM=1; else PRAYER_ROOM=0; fi
+fi
+
 # --- Summary ---
 echo
 echo "=== Zusammenfassung ==="
@@ -207,6 +246,11 @@ echo "  WLAN:        ${SSID:-keins, erster Start per LAN-Kabel}"
 for id in $REPLACE; do
   echo "  Ersetzt:     #$id $(slot_name "$id") (alter Platz wird geloescht)"
 done
+if [ -n "$TAKE_OVER_KIOSK" ]; then
+  echo "  Anzeige:     Einstellungen von #$TAKE_OVER $(slot_name "$TAKE_OVER"), kein neuer QR-Scan"
+else
+  echo "  Anzeige:     vor Ort per QR einrichten$([ "$PRAYER_ROOM" = 1 ] && echo ", Gebetsraum (ohne Bilder/Flyer)")"
+fi
 echo "  Server:      $VPS_ALIAS"
 echo
 if [ "$WRITE_OS" = "1" ]; then
@@ -265,14 +309,17 @@ for id in $REPLACE; do
   echo "  Alten Platz #$id loeschen..."
   ssh "$VPS_ALIAS" "sudo fleet manage-pis remove $id"
 done
-ADD_OUT="$(ssh "$VPS_ALIAS" "sudo fleet manage-pis add \"$NAME\"")"
+ADD_ARGS="\"$NAME\""
+if [ "$PRAYER_ROOM" = 1 ]; then ADD_ARGS="$ADD_ARGS --prayer-room"; fi
+if [ -n "$TAKE_OVER_KIOSK" ]; then ADD_ARGS="$ADD_ARGS --kiosk $TAKE_OVER_KIOSK"; fi
+ADD_OUT="$(ssh "$VPS_ALIAS" "sudo fleet manage-pis add $ADD_ARGS")"
 TOKEN="$(printf '%s\n' "$ADD_OUT" | awk '/enrollment_token:/ {print $2; exit}' | tr -d '[:space:]')"
 if [ -z "$TOKEN" ]; then
   echo "FEHLER: kein Anmelde-Token vom Server bekommen:"
   printf '%s\n' "$ADD_OUT"
   exit 1
 fi
-printf '%s\n' "$ADD_OUT" | grep -E "created|wg_ip" || true
+printf '%s\n' "$ADD_OUT" | grep -E "created|wg_ip|kiosk_id|prayer_room" || true
 
 # --- Write the card ---
 echo
