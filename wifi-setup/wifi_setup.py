@@ -33,10 +33,11 @@ AP_ADDR = "10.42.0.1"
 # the sign-in page when the check hosts resolve to a private address, so it is one from
 # the benchmarking range (RFC 2544, never routed), added to wlan0 next to AP_ADDR.
 PROBE_ADDR = "198.18.0.1"
-# NetworkManager derives the channel from the SSID: on channel 1 the Pi 4 hotspot lost
-# phones right after the handshake, on 6 and 11 they joined. 12 and 13 are not allowed
-# in every country, so phones from elsewhere would not see the network there.
-AP_CHANNEL = "6"
+# Left to NetworkManager the channel follows the SSID. A local disturbance on one channel
+# (seen on 1: phones dropped right after the handshake) then hit some names only, so the
+# channel is fixed and every start takes the next one: switching the Pi off and on is a
+# real way out. 12 and 13 are left out, they are not allowed in every country.
+AP_CHANNELS = ("6", "11", "1")
 AP_PREFIX = "BIG-Setup"
 NEW_CON = "big-wifi-new"
 LOCAL_HOSTS = {AP_ADDR, "127.0.0.1", "localhost"}
@@ -143,6 +144,20 @@ def setup_password():
     return password
 
 
+def setup_channel():
+    path = STATE_DIR / "ap-channel"
+    try:
+        last = path.read_text().strip()
+    except OSError:
+        last = ""
+    channel = AP_CHANNELS[0]
+    if last in AP_CHANNELS:
+        channel = AP_CHANNELS[(AP_CHANNELS.index(last) + 1) % len(AP_CHANNELS)]
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    path.write_text(channel + "\n")
+    return channel
+
+
 def run(args, timeout=60):
     try:
         done = subprocess.run(args, capture_output=True, text=True, timeout=timeout, check=False)
@@ -215,10 +230,10 @@ class Network:
         run(["nmcli", "connection", "modify", "id", NEW_CON, "connection.id", ssid])
         return True, ""
 
-    def start_ap(self, ssid, password):
+    def start_ap(self, ssid, password, channel):
         run(["nmcli", "connection", "delete", "id", AP_CON])
         ok, out = run(["nmcli", "--wait", "20", "device", "wifi", "hotspot", "ifname", IFACE,
-                       "con-name", AP_CON, "ssid", ssid, "band", "bg", "channel", AP_CHANNEL,
+                       "con-name", AP_CON, "ssid", ssid, "band", "bg", "channel", channel,
                        "password", password], timeout=35)
         if not ok:
             log(f"hotspot failed: {out}")
@@ -270,8 +285,8 @@ class Setup:
         self.ap = None
         self.done = False
 
-    def start(self, ssid, password):
-        self.ap = (ssid, password)
+    def start(self, ssid, password, channel):
+        self.ap = (ssid, password, channel)
         self.networks = self.net.scan()
         self._open_ap()
 
@@ -602,7 +617,9 @@ def main():
     ssid = setup_ssid(password)
     setup = Setup(net, notice=notice, saved=saved, home_wifi=home_wifi)
     write_qr_codes(ssid, password)
-    setup.start(ssid, password)
+    channel = setup_channel()
+    log(f"setup Wi-Fi {ssid} on channel {channel}")
+    setup.start(ssid, password, channel)
     current.setup = setup
     write_state("setup")
     # While a saved Wi-Fi was awaited the TV went on to the kiosk; bring it back.
