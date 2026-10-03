@@ -33,6 +33,10 @@ AP_ADDR = "10.42.0.1"
 # the sign-in page when the check hosts resolve to a private address, so it is one from
 # the benchmarking range (RFC 2544, never routed), added to wlan0 next to AP_ADDR.
 PROBE_ADDR = "198.18.0.1"
+# NetworkManager derives the channel from the SSID: on channel 1 the Pi 4 hotspot lost
+# phones right after the handshake, on 6 and 11 they joined. 12 and 13 are not allowed
+# in every country, so phones from elsewhere would not see the network there.
+AP_CHANNEL = "6"
 AP_PREFIX = "BIG-Setup"
 NEW_CON = "big-wifi-new"
 LOCAL_HOSTS = {AP_ADDR, "127.0.0.1", "localhost"}
@@ -212,11 +216,10 @@ class Network:
         return True, ""
 
     def start_ap(self, ssid, password):
-        # NetworkManager's own hotspot settings: phones failed the handshake with a
-        # hand-built profile (fixed band and PMF off) on the Pi 4.
         run(["nmcli", "connection", "delete", "id", AP_CON])
         ok, out = run(["nmcli", "--wait", "20", "device", "wifi", "hotspot", "ifname", IFACE,
-                       "con-name", AP_CON, "ssid", ssid, "password", password], timeout=35)
+                       "con-name", AP_CON, "ssid", ssid, "band", "bg", "channel", AP_CHANNEL,
+                       "password", password], timeout=35)
         if not ok:
             log(f"hotspot failed: {out}")
         run(["nmcli", "connection", "modify", "id", AP_CON, "connection.autoconnect", "no"])
