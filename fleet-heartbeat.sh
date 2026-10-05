@@ -147,3 +147,10 @@ if [ -n "$KID" ]; then
     pkill -SIGHUP -x cage || pkill -SIGHUP -x cog || true
   fi
 fi
+
+# tv-schedule.py times the TV's night by the prayer times of this place.
+LOC="$(printf '%s' "$RESP" | jq -r '.location // empty' 2>/dev/null || true)"
+if [[ "$LOC" =~ ^[A-Za-z0-9_-]{1,64}$ ]] && [ "$LOC" != "$(cat /var/lib/fleet/location 2>/dev/null || true)" ]; then
+  mkdir -p /var/lib/fleet
+  printf '%s\n' "$LOC" > /var/lib/fleet/location
+fi
