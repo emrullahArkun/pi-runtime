@@ -161,9 +161,10 @@ fi
 # --- Wi-Fi for the first start (optional) ---
 if [ -z "$SSID" ]; then
   SSID="$(ask "WLAN fuer den ersten Start zu Hause (leer lassen bei LAN-Kabel): ")"
-  if [ -n "$SSID" ] && [ -z "$PSK" ]; then
-    read -r -s -p "  WLAN-Passwort: " PSK; echo
-  fi
+fi
+# Also when the name came with --ssid; empty means an open network.
+if [ -n "$SSID" ] && [ -z "$PSK" ]; then
+  read -r -s -p "  WLAN-Passwort (leer bei offenem WLAN): " PSK; echo
 fi
 
 # --- Replaced Pi ---
