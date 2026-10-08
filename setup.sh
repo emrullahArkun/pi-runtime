@@ -127,6 +127,7 @@ fi
 # --- Kiosk-Pakete installieren ---
 # cage + chromium = primaerer Kiosk (Wayland-Compositor + Browser)
 # cog + wpewebkit = leichtere Alternative fuer schwache Hardware (via ~/.use-cog Toggle)
+# wlr-randr = schaltet 4K-Fernseher in kiosk.sh auf 1920x1080 (volle Breite, weniger Last)
 # v4l-utils = liefert cec-ctl fuer die TV-Steuerung per HDMI-CEC (fleet-control
 #   tv-on/tv-off; Port /dev/cec0 ODER /dev/cec1 wird per Auto-Detect gewaehlt,
 #   je nachdem an welchem HDMI der TV haengt; Zugriff via video-Gruppe, usermod unten).
@@ -141,7 +142,8 @@ ensure_packages \
   fonts-noto-core \
   fonts-noto-color-emoji \
   grim \
-  v4l-utils
+  v4l-utils \
+  wlr-randr
 
 # --- Bildschirmschoner / Blanking deaktivieren ---
 echo "[3/8] Screen blanking deaktivieren..."
