@@ -652,6 +652,8 @@ if [ "$FLEET_ENABLED" = "1" ] && sudo test -f /etc/wireguard/wg0.conf; then
   # im JSON-Payload. Resultat: server bekommt invalid JSON → 400. Mit eigenem
   # bash-Script umgehen wir das systemd-Escaping komplett.
   sudo install -m 0755 -o root -g root "$SCRIPT_DIR/fleet-heartbeat.sh" /usr/local/sbin/fleet-heartbeat.sh
+  # Restarts a hung kiosk; the heartbeat calls it with what the server reports.
+  sudo install -m 0755 -o root -g root "$SCRIPT_DIR/kiosk-watchdog.sh" /usr/local/sbin/fleet-kiosk-watchdog
 
   sudo tee /etc/systemd/system/fleet-heartbeat.service > /dev/null << EOF
 [Unit]

@@ -89,6 +89,28 @@ if [ -n "$KLOG" ]; then
   STORAGE_ERRORS="$(printf '%s\n' "$KLOG" | grep -c -E 'mmcblk[0-9]+.*error|error.*mmcblk[0-9]|EXT4-fs error' || true)"
 fi
 
+# --- System: OS release, kernel and the Chromium package version (without starting it).
+OS_NAME="$(sed -n 's/^PRETTY_NAME="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "${OS_RELEASE:-/etc/os-release}" 2>/dev/null | head -n 1 || true)"
+KERNEL="$(uname -r 2>/dev/null || true)"
+CHROMIUM="$(dpkg-query -W -f='${Version}' chromium 2>/dev/null | sed 's/^[0-9]*://; s/-[^-]*$//' || true)"
+
+# --- Since boot: kiosk restarts by fleet-kiosk-watchdog, processes the kernel killed for memory.
+KIOSK_RESTARTS="$(cat "${WATCHDOG_COUNT:-/run/fleet/kiosk-restarts}" 2>/dev/null || true)"
+[[ "$KIOSK_RESTARTS" =~ ^[0-9]+$ ]] || KIOSK_RESTARTS=0
+OOM_KILLS="$(awk '$1 == "oom_kill" {print $2}' /proc/vmstat 2>/dev/null || true)"
+[[ "$OOM_KILLS" =~ ^[0-9]+$ ]] || OOM_KILLS=null
+
+# --- What the night schedule for the TV (tv-schedule.py) wants right now.
+TV_SCHEDULE=""
+if [ "$(cat "${TV_SCHEDULE_SWITCH:-/etc/fleet/tv-schedule}" 2>/dev/null || true)" = off ]; then
+  TV_SCHEDULE=disabled
+else
+  case "$(cat "${TV_SCHEDULE_STATE:-/var/lib/fleet/tv-schedule-state}" 2>/dev/null || true)" in
+    on) TV_SCHEDULE=on ;;
+    off) TV_SCHEDULE=off ;;
+  esac
+fi
+
 # --- Software: the monorepo commit /opt/kiosk was mirrored from, the update channel, and
 #     how the last nightly self-update went (its log lines start with "[<UTC time>] ").
 KIOSK_DIR="${KIOSK_DIR:-/opt/kiosk}"
@@ -116,11 +138,14 @@ PAYLOAD="$(jq -n \
   --argjson overlay "$OVERLAY" --argjson serr "$STORAGE_ERRORS" \
   --arg rcommit "$RUNTIME_COMMIT" --arg supd "$SELFUPDATE" --argjson supdat "$SELFUPDATE_AT" \
   --arg channel "$CHANNEL" \
+  --arg os "${OS_NAME:0:64}" --arg kernel "${KERNEL:0:64}" --arg chromium "${CHROMIUM:0:64}" \
+  --argjson restarts "$KIOSK_RESTARTS" --argjson oom "$OOM_KILLS" --arg tvsched "$TV_SCHEDULE" \
   '{uptime_seconds:$up, cpu_serial:$serial,
     metrics:({temp:$temp, load1:$load1, cores:$cores,
               mem_used_pct:$mem, disk_used_pct:$disk, throttled:$throttled,
               clock_synced:$synced, time:$now,
               display_connected:$dconn, overlay_active:$overlay, storage_errors:$serr,
+              kiosk_restarts:$restarts, oom_kills:$oom,
               wifi_signal_dbm:(if $dbm != null and $dbm >= -120 and $dbm <= 0 then $dbm else null end)}
              + (if $tv != "" then {tv_power:$tv} else {} end)
              + (if $net != "" then {net_type:$net} else {} end)
@@ -128,7 +153,11 @@ PAYLOAD="$(jq -n \
              + (if $dmode != "" then {display_mode:$dmode} else {} end)
              + (if $rcommit != "" then {runtime_commit:$rcommit} else {} end)
              + (if $channel == "early" or $channel == "stable" then {update_channel:$channel} else {} end)
-             + (if $supd != "" then {selfupdate:$supd, selfupdate_at:$supdat} else {} end))}')"
+             + (if $supd != "" then {selfupdate:$supd, selfupdate_at:$supdat} else {} end)
+             + (if $os != "" then {os:$os} else {} end)
+             + (if $kernel != "" then {kernel:$kernel} else {} end)
+             + (if $chromium != "" then {chromium:$chromium} else {} end)
+             + (if $tvsched != "" then {tv_schedule:$tvsched} else {} end))}')"
 
 RESP="$(curl -fsS --max-time 10 \
   -X POST \
@@ -153,4 +182,11 @@ LOC="$(printf '%s' "$RESP" | jq -r '.location // empty' 2>/dev/null || true)"
 if [[ "$LOC" =~ ^[A-Za-z0-9_-]{1,64}$ ]] && [ "$LOC" != "$(cat /var/lib/fleet/location 2>/dev/null || true)" ]; then
   mkdir -p /var/lib/fleet
   printf '%s\n' "$LOC" > /var/lib/fleet/location
+fi
+
+# A kiosk that stopped polling gets restarted; fleet-kiosk-watchdog decides whether.
+SILENT="$(printf '%s' "$RESP" | jq -r '.kiosk_silent_s // empty' 2>/dev/null || true)"
+WATCHDOG="${WATCHDOG:-/usr/local/sbin/fleet-kiosk-watchdog}"
+if [ -n "$SILENT" ] && [ -x "$WATCHDOG" ]; then
+  "$WATCHDOG" "$SILENT" "$UP" || true
 fi
