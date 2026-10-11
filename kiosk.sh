@@ -65,6 +65,27 @@ if [ "$START_URL" = "$KIOSK_URL" ]; then
   done
 fi
 
+# Without a battery-backed clock the Pi starts with the time it last saved, too early after
+# a power cut without internet. Unsynced after a minute, the kiosk shows a hint instead of
+# the countdown, and one watcher (lock) restarts it once the time is right.
+clock_synced() { [ "$(timedatectl show -p NTPSynchronized --value 2>/dev/null)" = yes ]; }
+if [ "$START_URL" = "$KIOSK_URL" ] && command -v timedatectl >/dev/null; then
+  for _ in $(seq 1 30); do
+    clock_synced && break
+    sleep 2
+  done
+  if ! clock_synced; then
+    START_URL="${KIOSK_URL}&clock=unsynced"
+    echo "Uhr nicht abgeglichen -> $START_URL"
+    (
+      flock -n 8 || exit 0
+      until clock_synced; do sleep 15; done
+      echo "Uhr abgeglichen, Kiosk startet neu"
+      pkill -SIGHUP -x cage
+    ) 8> /tmp/kiosk-clock-watch.lock &
+  fi
+fi
+
 # Right after boot switch the TV to this HDMI input (if it is on and speaks CEC).
 if [ "$(cut -d. -f1 /proc/uptime)" -lt 300 ] && [ -x /usr/local/sbin/fleet-control ]; then
   SSH_ORIGINAL_COMMAND=tv-input /usr/local/sbin/fleet-control >/dev/null 2>&1 &
