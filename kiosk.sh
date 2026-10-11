@@ -31,7 +31,7 @@ fi
 KIOSK_URL="${KIOSK_BASE_URL}/?kiosk=1"
 if [ -r /etc/fleet/kiosk-id ]; then
   KID="$(tr -d '[:space:]' < /etc/fleet/kiosk-id 2>/dev/null || true)"
-  [ -n "$KID" ] && KIOSK_URL="${KIOSK_BASE_URL}/?kiosk=1&kid=${KID}"
+  [[ "$KID" =~ ^[A-Za-z0-9_-]{1,64}$ ]] && KIOSK_URL="${KIOSK_BASE_URL}/?kiosk=1&kid=${KID}"
 fi
 # Not enrolled yet (fresh gold image): a waiting screen instead of a pairing QR code for
 # the wrong kiosk; the heartbeat restarts the kiosk once the id is there.

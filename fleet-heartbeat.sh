@@ -183,8 +183,9 @@ RESP="$(curl -fsS --max-time 10 \
 
 # kiosk.sh reads the id as the Pi user and appends it to the kiosk URL, so a new id
 # (first enrollment) restarts the kiosk.
+# Same pattern as KIOSK_ID_PATTERN in the API contract; anything else never reaches the URL.
 KID="$(printf '%s' "$RESP" | jq -r '.kiosk_id // empty' 2>/dev/null || true)"
-if [ -n "$KID" ]; then
+if [[ "$KID" =~ ^[A-Za-z0-9_-]{1,64}$ ]]; then
   mkdir -p /etc/fleet
   if [ "$KID" != "$(cat /etc/fleet/kiosk-id 2>/dev/null || true)" ]; then
     printf '%s\n' "$KID" > /etc/fleet/kiosk-id
