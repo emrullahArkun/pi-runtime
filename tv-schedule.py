@@ -26,6 +26,35 @@ ON_LATEST = dt.time(4, 0)
 AFTER_YATSI = dt.timedelta(hours=1)
 BEFORE_IMSAK = dt.timedelta(minutes=30)
 TABLE_MAX_AGE = dt.timedelta(days=7)
+# Holy nights keep the TV on until 02:00; in Ramadan it comes on in time for sahur.
+KANDIL_UNTIL = dt.time(2, 0)
+BEFORE_IMSAK_RAMADAN = dt.timedelta(minutes=90)
+KANDIL_NIGHTS = {"Regaib Kandili", "Miraç Kandili", "Berat Kandili", "Mevlid Kandili", "Kadir Gecesi"}
+RAMADAN_START = "Ramazan Başlangıcı"
+RAMADAN_END = "Ramazan Bayramı (1. Gün)"
+
+
+class Special:
+    """Days from holidays.json that change the night: kandil evenings and fasting days."""
+
+    def __init__(self, holidays=()):
+        named = [(h.get("date"), h.get("tr")) for h in holidays if isinstance(h, dict)]
+        self.kandil = {date for date, name in named if name in KANDIL_NIGHTS}
+        # A date marks the evening the holy night begins, and the first day of fasting.
+        self.fasting = set()
+        ends = sorted(date for date, name in named if name == RAMADAN_END and isinstance(date, str))
+        for start in sorted(date for date, name in named if name == RAMADAN_START and isinstance(date, str)):
+            end = next((e for e in ends if e > start), None)
+            try:
+                day, last = dt.date.fromisoformat(start), dt.date.fromisoformat(end) if end else None
+            except ValueError:
+                continue
+            while last and day < last:
+                self.fasting.add(day.isoformat())
+                day += dt.timedelta(days=1)
+
+
+NO_SPECIAL = Special()
 
 
 def log(message):
@@ -38,23 +67,26 @@ def at(day, hhmm):
     return dt.datetime.combine(day, dt.time(int(hours), int(minutes)))
 
 
-def night(table, day):
+def night(table, day, special=NO_SPECIAL):
     """The off window from the evening of `day` to the next morning, or None."""
     next_day = day + dt.timedelta(days=1)
     evening, morning = table.get(day.isoformat()), table.get(next_day.isoformat())
     if not evening or not morning:
         return None
+    before_imsak = BEFORE_IMSAK_RAMADAN if next_day.isoformat() in special.fasting else BEFORE_IMSAK
     try:
         off = max(dt.datetime.combine(day, OFF_EARLIEST), at(day, evening["yatsi"]) + AFTER_YATSI)
-        on = min(dt.datetime.combine(next_day, ON_LATEST), at(next_day, morning["imsak"]) - BEFORE_IMSAK)
+        on = min(dt.datetime.combine(next_day, ON_LATEST), at(next_day, morning["imsak"]) - before_imsak)
     except (KeyError, ValueError, AttributeError):
         return None
+    if day.isoformat() in special.kandil:
+        off = max(off, dt.datetime.combine(next_day, KANDIL_UNTIL))
     return (off, on) if off < on else None
 
 
-def phase(table, now):
+def phase(table, now, special=NO_SPECIAL):
     for day in (now.date() - dt.timedelta(days=1), now.date()):
-        window = night(table, day)
+        window = night(table, day, special)
         if window and window[0] <= now < window[1]:
             return "off"
     return "on"
@@ -85,37 +117,47 @@ def base_url():
     return ""
 
 
-def fetch(place):
+def fetch(path, kind):
     base = base_url()
     if not base:
         return None
     try:
-        with urllib.request.urlopen(f"{base}/prayer-times/{place}.json", timeout=20) as res:
-            table = json.load(res)
+        with urllib.request.urlopen(f"{base}/{path}", timeout=20) as res:
+            data = json.load(res)
     except (OSError, ValueError):
         return None
-    return table if isinstance(table, dict) else None
+    return data if isinstance(data, kind) else None
 
 
-def load_table(place, now):
-    """The cached table of `place`, refreshed weekly; offline the old one still serves."""
-    cache = STATE_DIR / "prayer-times.json"
+def load_cached(name, key, path, kind, now):
+    """`path` from the kiosk site, refreshed weekly; offline the old copy still serves."""
+    cache = STATE_DIR / name
     try:
         cached = json.loads(cache.read_text())
-        if cached.get("location") != place:
+        if "times" in cached:  # written by the version before holidays were cached
+            cached = {"key": cached.get("location"), "fetched": cached.get("fetched"), "data": cached["times"]}
+        if cached.get("key") != key:
             cached = None
-    except (OSError, ValueError, AttributeError):
+    except (OSError, ValueError, AttributeError, TypeError):
         cached = None
     try:
         stale = cached is None or now - dt.datetime.fromisoformat(cached["fetched"]) >= TABLE_MAX_AGE
     except (KeyError, TypeError, ValueError):
         stale = True
     if stale:
-        table = fetch(place)
-        if table is not None:
-            cached = {"location": place, "fetched": now.isoformat(), "times": table}
+        data = fetch(path, kind)
+        if data is not None:
+            cached = {"key": key, "fetched": now.isoformat(), "data": data}
             write(cache, json.dumps(cached))
-    return cached["times"] if cached else None
+    return cached["data"] if cached else None
+
+
+def load_table(place, now):
+    return load_cached("prayer-times.json", place, f"prayer-times/{place}.json", dict, now)
+
+
+def load_special(now):
+    return Special(load_cached("holidays.json", "holidays", "holidays.json", list, now) or ())
 
 
 def switch_tv(command):
@@ -136,7 +178,7 @@ def main(now=None):
     table = load_table(location(), now)
     if table is None:
         return
-    want = phase(table, now)
+    want = phase(table, now, load_special(now))
     state = STATE_DIR / "tv-schedule-state"
     last = read(state)
     if last == want:
