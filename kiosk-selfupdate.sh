@@ -4,6 +4,8 @@
 # (default) the newest one that is at least STABLE_AGE_H hours old, so a bad change shows
 # on an early Pi first. The commit is applied with `setup.sh --update`; a failed run is
 # retried the next night. A failed fetch leaves the Pi on its current state.
+# Signed releases (tags <channel>-YYYYMMDD-HHMM, release-pi.sh) are only checked and
+# reported for now; the Pi does not follow them yet.
 
 set -uo pipefail
 
@@ -13,6 +15,8 @@ CHANNEL_FILE="${CHANNEL_FILE:-/etc/fleet/channel}"
 APPLIED_FILE="${APPLIED_FILE:-/var/lib/kiosk-update/applied}"
 LOCK_FILE="${LOCK_FILE:-/run/kiosk-selfupdate.lock}"
 STABLE_AGE_H="${STABLE_AGE_H:-24}"
+ALLOWED_SIGNERS="${ALLOWED_SIGNERS:-/etc/fleet/allowed_signers}"
+RELEASE_FILE="${RELEASE_FILE:-/var/lib/kiosk-update/release}"
 
 ts() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 log() { echo "[$(ts)] $*" >> "$LOG_FILE"; }
@@ -40,10 +44,43 @@ if ! g fetch -q --depth 50 origin main >> "$LOG_FILE" 2>&1; then
   log "git fetch fehlgeschlagen — Pi laeuft mit Stand $OLD_HEAD weiter."
   exit 0
 fi
+MAIN_HEAD="$(g rev-parse FETCH_HEAD)"
+
+# The tag name is part of the signed object, so a renamed old release does not pass.
+release_valid() {
+  [ "$(g cat-file tag "$1" 2>/dev/null | sed -n '1,/^$/s/^tag //p')" = "$1" ] &&
+    g -c gpg.format=ssh -c gpg.ssh.allowedSignersFile="$ALLOWED_SIGNERS" verify-tag "$1" >/dev/null 2>&1
+}
+
+# Writes "<check> <tag>": ok = the newest release is signed by the key in ALLOWED_SIGNERS;
+# invalid = a newer tag fails the check (someone without the key set it); none = no
+# release yet; no-key = this Pi cannot check.
+check_release() {
+  local check=none tag="" t
+  if [ ! -s "$ALLOWED_SIGNERS" ]; then
+    check=no-key
+  elif g fetch -q --depth 50 --tags --force origin >> "$LOG_FILE" 2>&1; then
+    for t in $(g tag -l "$CHANNEL-*" --sort=-refname | grep -E "^$CHANNEL-[0-9]{8}-[0-9]{4}\$"); do
+      if release_valid "$t"; then
+        tag="$t"
+        [ "$check" = invalid ] || check=ok
+        break
+      fi
+      check=invalid
+    done
+  else
+    return
+  fi
+  mkdir -p "$(dirname "$RELEASE_FILE")"
+  echo "$check $tag" > "$RELEASE_FILE"
+  log "Freigabe: $check ${tag:-(keine)} (Kanal $CHANNEL)"
+}
+check_release
+
 if [ "$CHANNEL" = "early" ]; then
-  TARGET="$(g rev-parse FETCH_HEAD)"
+  TARGET="$MAIN_HEAD"
 else
-  TARGET="$(g rev-list -1 --before="$STABLE_AGE_H hours ago" FETCH_HEAD)"
+  TARGET="$(g rev-list -1 --before="$STABLE_AGE_H hours ago" "$MAIN_HEAD")"
 fi
 
 # Never step back: a Pi that already has TARGET (e.g. freshly cloned, or just moved from

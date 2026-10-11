@@ -118,6 +118,10 @@ RUNTIME_COMMIT="$(git -c safe.directory="$KIOSK_DIR" -C "$KIOSK_DIR" log -1 --fo
   | sed -n 's/^sync from monorepo @ \([0-9a-f]\{7,40\}\)$/\1/p' || true)"
 CHANNEL="$(tr -dc 'a-z' 2>/dev/null < "${CHANNEL_FILE:-/etc/fleet/channel}" || true)"
 UPDATE_LINE="$(grep -E '^\[[^]]+\] (no-op|updated|git (pull|fetch) fehlgeschlagen|update fehlgeschlagen|SKIP)' "${UPDATE_LOG:-/var/log/kiosk-update.log}" 2>/dev/null | tail -n 1 || true)"
+# "<check> <tag>" from the nightly release check in kiosk-selfupdate.sh.
+read -r RELEASE_CHECK RELEASE_TAG < "${RELEASE_FILE:-/var/lib/kiosk-update/release}" 2>/dev/null || true
+case "${RELEASE_CHECK:-}" in ok | invalid | none | no-key) ;; *) RELEASE_CHECK="" ;; esac
+[[ "${RELEASE_TAG:-}" =~ ^(early|stable)-[0-9]{8}-[0-9]{4}$ ]] || RELEASE_TAG=""
 SELFUPDATE=""; SELFUPDATE_AT=null
 case "$UPDATE_LINE" in
   "") ;;
@@ -137,7 +141,7 @@ PAYLOAD="$(jq -n \
   --argjson dconn "$DISPLAY_CONNECTED" --arg dmode "${DISPLAY_MODE:0:16}" \
   --argjson overlay "$OVERLAY" --argjson serr "$STORAGE_ERRORS" \
   --arg rcommit "$RUNTIME_COMMIT" --arg supd "$SELFUPDATE" --argjson supdat "$SELFUPDATE_AT" \
-  --arg channel "$CHANNEL" \
+  --arg channel "$CHANNEL" --arg rcheck "$RELEASE_CHECK" --arg rtag "$RELEASE_TAG" \
   --arg os "${OS_NAME:0:64}" --arg kernel "${KERNEL:0:64}" --arg chromium "${CHROMIUM:0:64}" \
   --argjson restarts "$KIOSK_RESTARTS" --argjson oom "$OOM_KILLS" --arg tvsched "$TV_SCHEDULE" \
   '{uptime_seconds:$up, cpu_serial:$serial,
@@ -154,6 +158,8 @@ PAYLOAD="$(jq -n \
              + (if $rcommit != "" then {runtime_commit:$rcommit} else {} end)
              + (if $channel == "early" or $channel == "stable" then {update_channel:$channel} else {} end)
              + (if $supd != "" then {selfupdate:$supd, selfupdate_at:$supdat} else {} end)
+             + (if $rcheck != "" then {release_check:$rcheck} else {} end)
+             + (if $rtag != "" then {release_tag:$rtag} else {} end)
              + (if $os != "" then {os:$os} else {} end)
              + (if $kernel != "" then {kernel:$kernel} else {} end)
              + (if $chromium != "" then {chromium:$chromium} else {} end)

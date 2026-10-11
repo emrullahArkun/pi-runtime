@@ -453,6 +453,10 @@ fi
 sudo install -d -m 0755 /etc/fleet
 sudo test -f /etc/fleet/channel || echo stable | sudo tee /etc/fleet/channel > /dev/null
 sudo install -m 0755 -o root -g root "$SCRIPT_DIR/kiosk-selfupdate.sh" /usr/local/sbin/kiosk-selfupdate.sh
+# The key that signs releases (release-pi.sh); the self-update checks tags against it.
+if [ -f "$SCRIPT_DIR/release/allowed_signers" ]; then
+  sudo install -m 0644 -o root -g root "$SCRIPT_DIR/release/allowed_signers" /etc/fleet/allowed_signers
+fi
 sudo tee /etc/cron.d/kiosk-selfupdate > /dev/null << 'EOF'
 # Auto-generiert von setup.sh — naechtliches Update aus pi-runtime, vor dem Reboot um 03:00.
 SHELL=/bin/bash
