@@ -394,7 +394,8 @@ sudo tee /etc/cron.d/kiosk-daily-reboot > /dev/null << 'EOF'
 # Cron-Jobs ohne abschliessenden Newline werden ignoriert!
 SHELL=/bin/bash
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
-0 3 * * * root /sbin/reboot
+# Waits up to 30 min for kiosk-packages.sh, so the reboot never cuts an install short.
+0 3 * * * root flock -w 1800 /run/fleet-packages.lock true; /sbin/reboot
 EOF
 sudo chmod 644 /etc/cron.d/kiosk-daily-reboot
 
@@ -411,26 +412,27 @@ PATH=/usr/sbin:/usr/bin:/sbin:/bin
 EOF
 sudo chmod 644 /etc/cron.d/kiosk-tv-schedule
 
-# --- unattended-upgrades fuer Sicherheits-Patches ---
-# Auto-Reboot deaktivieren — der Daily-Cron erledigt das.
-echo "[+] unattended-upgrades..."
-ensure_packages unattended-upgrades apt-listchanges
-sudo tee /etc/apt/apt.conf.d/52unattended-upgrades-pi.conf > /dev/null << 'EOF'
-// Auto-generiert von setup.sh — eigene Origins-Liste fuer Raspberry Pi OS.
-Unattended-Upgrade::Origins-Pattern {
-    "origin=Debian,codename=${distro_codename},label=Debian";
-    "origin=Debian,codename=${distro_codename},label=Debian-Security";
-    "origin=Raspbian,codename=${distro_codename},label=Raspbian";
-    "origin=Raspberry Pi Foundation,codename=${distro_codename},label=Raspberry Pi Foundation";
-};
-// Reboot uebernimmt Daily-Cron um 03:00 — kein doppelter Reboot.
-Unattended-Upgrade::Automatic-Reboot "false";
-EOF
-# 20auto-upgrades aktivieren (sonst laeuft der Timer nicht).
+# --- Package updates: kiosk-packages.sh at night instead of apt's own timers ---
+# unattended-upgrade installs Debian security updates only (apt/52unattended-upgrades-pi.conf);
+# everything else follows the update channel.
+echo "[+] Paket-Updates (nachts, Sicherheit + Kanal)..."
+ensure_packages unattended-upgrades
+sudo install -m 0644 -o root -g root "$SCRIPT_DIR/apt/52unattended-upgrades-pi.conf" /etc/apt/apt.conf.d/52unattended-upgrades-pi.conf
 sudo tee /etc/apt/apt.conf.d/20auto-upgrades > /dev/null << 'EOF'
-APT::Periodic::Update-Package-Lists "1";
-APT::Periodic::Unattended-Upgrade "1";
+// Auto-generiert von setup.sh — die Updates laufen nachts in kiosk-packages.sh.
+APT::Periodic::Update-Package-Lists "0";
+APT::Periodic::Unattended-Upgrade "0";
 EOF
+# The timers ran around 06:00 and swapped Chromium under the running kiosk.
+sudo systemctl mask --now apt-daily.timer apt-daily-upgrade.timer > /dev/null 2>&1 || true
+sudo install -m 0755 -o root -g root "$SCRIPT_DIR/kiosk-packages.sh" /usr/local/sbin/kiosk-packages.sh
+sudo tee /etc/cron.d/kiosk-packages > /dev/null << 'EOF'
+# Auto-generiert von setup.sh — Paket-Updates nach dem Self-Update, vor dem Reboot um 03:00.
+SHELL=/bin/bash
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+15 2 * * * root /usr/local/sbin/kiosk-packages.sh
+EOF
+sudo chmod 644 /etc/cron.d/kiosk-packages
 
 # --- Self-Update ---
 # /opt/kiosk = clone of the PUBLIC pi-runtime repo (only the Pi scripts, no secrets).

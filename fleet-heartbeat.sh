@@ -122,6 +122,13 @@ UPDATE_LINE="$(grep -E '^\[[^]]+\] (no-op|updated|git (pull|fetch) fehlgeschlage
 read -r RELEASE_CHECK RELEASE_TAG < "${RELEASE_FILE:-/var/lib/kiosk-update/release}" 2>/dev/null || true
 case "${RELEASE_CHECK:-}" in ok | invalid | none | no-key) ;; *) RELEASE_CHECK="" ;; esac
 [[ "${RELEASE_TAG:-}" =~ ^(early|stable)-[0-9]{8}-[0-9]{4}$ ]] || RELEASE_TAG=""
+# kiosk-packages.sh: "<ok|failed> <epoch>" of the last night, "<epoch> <release>" of the
+# last full upgrade.
+read -r PACKAGES PACKAGES_AT < "${PACKAGES_FILE:-/var/lib/kiosk-update/packages}" 2>/dev/null || true
+case "${PACKAGES:-}" in ok | failed) ;; *) PACKAGES="" ;; esac
+[[ "${PACKAGES_AT:-}" =~ ^[0-9]{1,10}$ ]] || PACKAGES_AT=null
+read -r PACKAGES_FULL_AT _ < "${PACKAGES_FULL_FILE:-/var/lib/kiosk-update/packages-full}" 2>/dev/null || true
+[[ "${PACKAGES_FULL_AT:-}" =~ ^[0-9]{1,10}$ ]] || PACKAGES_FULL_AT=null
 SELFUPDATE=""; SELFUPDATE_AT=null
 case "$UPDATE_LINE" in
   "") ;;
@@ -142,6 +149,7 @@ PAYLOAD="$(jq -n \
   --argjson overlay "$OVERLAY" --argjson serr "$STORAGE_ERRORS" \
   --arg rcommit "$RUNTIME_COMMIT" --arg supd "$SELFUPDATE" --argjson supdat "$SELFUPDATE_AT" \
   --arg channel "$CHANNEL" --arg rcheck "$RELEASE_CHECK" --arg rtag "$RELEASE_TAG" \
+  --arg pkgs "$PACKAGES" --argjson pkgsat "$PACKAGES_AT" --argjson pkgsfull "$PACKAGES_FULL_AT" \
   --arg os "${OS_NAME:0:64}" --arg kernel "${KERNEL:0:64}" --arg chromium "${CHROMIUM:0:64}" \
   --argjson restarts "$KIOSK_RESTARTS" --argjson oom "$OOM_KILLS" --arg tvsched "$TV_SCHEDULE" \
   '{uptime_seconds:$up, cpu_serial:$serial,
@@ -160,6 +168,8 @@ PAYLOAD="$(jq -n \
              + (if $supd != "" then {selfupdate:$supd, selfupdate_at:$supdat} else {} end)
              + (if $rcheck != "" then {release_check:$rcheck} else {} end)
              + (if $rtag != "" then {release_tag:$rtag} else {} end)
+             + (if $pkgs != "" then {packages:$pkgs, packages_at:$pkgsat} else {} end)
+             + (if $pkgsfull != null then {packages_full_at:$pkgsfull} else {} end)
              + (if $os != "" then {os:$os} else {} end)
              + (if $kernel != "" then {kernel:$kernel} else {} end)
              + (if $chromium != "" then {chromium:$chromium} else {} end)
