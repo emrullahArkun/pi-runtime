@@ -121,16 +121,10 @@ export XCURSOR_SIZE=1
 
 # HTTP cache in RAM (/tmp is tmpfs) to spare the SD card; the offline copy of the kiosk
 # lives in the service worker storage of the profile and survives reboots.
-# 4K TVs often prefer 4096x2160, wider than 16:9 (the kiosk then gets side borders), and
-# make the Pi draw four times the pixels. Inside cage, every output that offers 1920x1080
-# switches to it before the browser starts (the first such mode has the highest refresh
-# rate); others keep their mode.
+# kiosk-display.sh keeps 4K TVs in 1920x1080 (full width, less load); it runs inside the
+# cage session next to the browser and ends with it.
 exec cage -d -- /bin/sh -c '
-  if command -v wlr-randr >/dev/null; then
-    for out in $(wlr-randr 2>/dev/null | sed -n "s/^\([^ ]\+\) .*/\1/p"); do
-      wlr-randr --output "$out" --mode 1920x1080 >/dev/null 2>&1 || true
-    done
-  fi
+  "$HOME/kiosk-display.sh" "$$" &
   exec "$@"' kiosk-output "$CHROMIUM_BIN" \
   --kiosk \
   --noerrdialogs \

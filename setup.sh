@@ -127,7 +127,7 @@ fi
 # --- Kiosk-Pakete installieren ---
 # cage + chromium = primaerer Kiosk (Wayland-Compositor + Browser)
 # cog + wpewebkit = leichtere Alternative fuer schwache Hardware (via ~/.use-cog Toggle)
-# wlr-randr = schaltet 4K-Fernseher in kiosk.sh auf 1920x1080 (volle Breite, weniger Last)
+# wlr-randr = schaltet 4K-Fernseher auf 1920x1080 (kiosk-display.sh; volle Breite, weniger Last)
 # v4l-utils = liefert cec-ctl fuer die TV-Steuerung per HDMI-CEC (fleet-control
 #   tv-on/tv-off; Port /dev/cec0 ODER /dev/cec1 wird per Auto-Detect gewaehlt,
 #   je nachdem an welchem HDMI der TV haengt; Zugriff via video-Gruppe, usermod unten).
@@ -180,9 +180,10 @@ sudo usermod -aG video,render,input,tty "$USERNAME"
 # --- Kiosk-Scripts kopieren ---
 # kiosk.sh     = Standard (Chromium via Cage/Wayland)
 # kiosk-cog.sh = Fallback (Cog + WPE WebKit direkt auf DRM, leichter)
+# kiosk-display.sh = haelt 4K-Fernseher in 1920x1080 (startet kiosk.sh in der cage-Sitzung)
 # Umschalten: `touch ~/.use-cog` fuer Cog, `rm ~/.use-cog` zurueck zu Chromium, dann reboot.
 echo "[7/8] Kiosk-Scripts einrichten..."
-for script in kiosk.sh kiosk-cog.sh; do
+for script in kiosk.sh kiosk-cog.sh kiosk-display.sh; do
   if [ -f "$SCRIPT_DIR/$script" ] && [ "$SCRIPT_DIR/$script" != "$USERHOME/$script" ]; then
     cp "$SCRIPT_DIR/$script" "$USERHOME/$script"
   fi
