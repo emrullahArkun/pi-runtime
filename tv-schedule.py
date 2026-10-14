@@ -4,6 +4,9 @@
 Off at Yatsı + 1 h, not before 23:00; on at İmsak − 30 min, not after 04:00, from the
 prayer times of the kiosk's place. Acts only when the phase changes, so a TV someone
 switched on at night stays on. `off` in /etc/fleet/tv-schedule disables it.
+
+Some TVs acknowledge the wake-up and stay in standby, so switching on is checked and
+tried twice. The result goes to the heartbeat via /var/lib/fleet/tv-switch.
 """
 
 import datetime as dt
@@ -12,6 +15,7 @@ import os
 import re
 import subprocess
 import syslog
+import time
 import urllib.request
 from pathlib import Path
 
@@ -32,6 +36,10 @@ BEFORE_IMSAK_RAMADAN = dt.timedelta(minutes=90)
 KANDIL_NIGHTS = {"Regaib Kandili", "Miraç Kandili", "Berat Kandili", "Mevlid Kandili", "Kadir Gecesi"}
 RAMADAN_START = "Ramazan Başlangıcı"
 RAMADAN_END = "Ramazan Bayramı (1. Gün)"
+ON_ATTEMPTS = 2
+ON_CHECKS = 6
+CHECK_EVERY_S = 10
+sleep = time.sleep
 
 
 class Special:
@@ -160,14 +168,45 @@ def load_special(now):
     return Special(load_cached("holidays.json", "holidays", "holidays.json", list, now) or ())
 
 
-def switch_tv(command):
+def control(command):
+    """Runs a fleet-control command; returns whether it worked and the end of its output."""
     env = {**os.environ, "SSH_ORIGINAL_COMMAND": command}
     try:
         done = subprocess.run([FLEET_CONTROL], env=env, capture_output=True, text=True, timeout=30, check=False)
     except (OSError, subprocess.TimeoutExpired) as err:
-        log(f"{command}: {err}")
-        return
-    log(f"{command}: {'ok' if done.returncode == 0 else (done.stdout + done.stderr).strip()[-200:]}")
+        return False, str(err)
+    return done.returncode == 0, (done.stdout + done.stderr).strip()[-200:]
+
+
+def switch_on():
+    """on, on-failed (the TV says it is in standby) or on-unverified (it does not say)."""
+    power = ""
+    for attempt in range(1, ON_ATTEMPTS + 1):
+        ok, out = control("tv-on")
+        if not ok:
+            log(f"tv-on: {out}")
+        for _ in range(ON_CHECKS):
+            sleep(CHECK_EVERY_S)
+            ok, out = control("tv-power")
+            power = out if ok else ""
+            if power == "on":
+                log(f"tv-on: an (Versuch {attempt})")
+                return "on"
+    if power == "standby":
+        log(f"tv-on: Fernseher blieb aus ({ON_ATTEMPTS} Versuche)")
+        return "on-failed"
+    log("tv-on: gesendet, der Fernseher meldet seinen Zustand nicht")
+    return "on-unverified"
+
+
+def switch_tv(command):
+    if command == "tv-on":
+        result = switch_on()
+    else:
+        ok, out = control(command)
+        log(f"{command}: {'ok' if ok else out}")
+        result = "off" if ok else "off-failed"
+    write(STATE_DIR / "tv-switch", f"{result} {int(time.time())}")
 
 
 def main(now=None):

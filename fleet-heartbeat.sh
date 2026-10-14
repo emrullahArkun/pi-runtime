@@ -110,6 +110,10 @@ else
     off) TV_SCHEDULE=off ;;
   esac
 fi
+# "<result> <epoch>" of the schedule's last switch.
+read -r TV_SWITCH TV_SWITCH_AT < "${TV_SWITCH_FILE:-/var/lib/fleet/tv-switch}" 2>/dev/null || true
+case "${TV_SWITCH:-}" in on | on-failed | on-unverified | off | off-failed) ;; *) TV_SWITCH="" ;; esac
+[[ "${TV_SWITCH_AT:-}" =~ ^[0-9]{1,10}$ ]] || TV_SWITCH_AT=null
 
 # --- Software: the monorepo commit /opt/kiosk was mirrored from, the update channel, and
 #     how the last nightly self-update went (its log lines start with "[<UTC time>] ").
@@ -152,6 +156,7 @@ PAYLOAD="$(jq -n \
   --arg pkgs "$PACKAGES" --argjson pkgsat "$PACKAGES_AT" --argjson pkgsfull "$PACKAGES_FULL_AT" \
   --arg os "${OS_NAME:0:64}" --arg kernel "${KERNEL:0:64}" --arg chromium "${CHROMIUM:0:64}" \
   --argjson restarts "$KIOSK_RESTARTS" --argjson oom "$OOM_KILLS" --arg tvsched "$TV_SCHEDULE" \
+  --arg tvswitch "$TV_SWITCH" --argjson tvswitchat "$TV_SWITCH_AT" \
   '{uptime_seconds:$up, cpu_serial:$serial,
     metrics:({temp:$temp, load1:$load1, cores:$cores,
               mem_used_pct:$mem, disk_used_pct:$disk, throttled:$throttled,
@@ -173,7 +178,8 @@ PAYLOAD="$(jq -n \
              + (if $os != "" then {os:$os} else {} end)
              + (if $kernel != "" then {kernel:$kernel} else {} end)
              + (if $chromium != "" then {chromium:$chromium} else {} end)
-             + (if $tvsched != "" then {tv_schedule:$tvsched} else {} end))}')"
+             + (if $tvsched != "" then {tv_schedule:$tvsched} else {} end)
+             + (if $tvswitch != "" and $tvswitchat != null then {tv_switch:$tvswitch, tv_switch_at:$tvswitchat} else {} end))}')"
 
 RESP="$(curl -fsS --max-time 10 \
   -X POST \

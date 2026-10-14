@@ -14,8 +14,9 @@
 #   restart-kiosk    cage/cog killen, Autostart re-launched
 #   logs             letzte 200 journalctl-Lines (ohne SSH-/Session-Eigenrauschen)
 #   screenshot       PNG-Frame des Wayland-Compositors (cage) auf stdout
-#   tv-on            Fernseher per HDMI-CEC einschalten (Image View On)
+#   tv-on            Fernseher per HDMI-CEC einschalten und auf den Pi-Eingang schalten
 #   tv-off           Fernseher per HDMI-CEC in Standby schicken
+#   tv-power         Zustand des Fernsehers: on, standby, transition oder no-answer
 #   tv-input         auf den HDMI-Eingang des Pi umschalten, nur wenn der TV schon an ist
 #
 # Alles andere -> exit 1 mit Fehlermeldung.
@@ -38,8 +39,12 @@ CEC_DEV="${CEC_DEVICE:-}"
 # Meldet den Adapter als Playback-Geraet an (holt phys.+log. Adresse aus EDID)
 # und liefert Erfolg, wenn dabei eine GUELTIGE phys. Adresse rauskam.
 # f.f.f.f = an diesem Port haengt kein CEC-faehiger TV.
+# An adapter that already has a logical address is left alone, as in fleet-heartbeat.sh:
+# claiming again on every call would announce the Pi anew each time.
 cec_claim() {
-  cec-ctl -d "$1" --playback >/dev/null 2>&1 || true
+  if cec-ctl -d "$1" 2>/dev/null | grep -q 'Logical Address Mask *: 0x0000'; then
+    cec-ctl -d "$1" --playback >/dev/null 2>&1 || true
+  fi
   ! cec-ctl -d "$1" 2>/dev/null | grep -q 'Physical Address *: f\.f\.f\.f'
 }
 
@@ -69,6 +74,13 @@ cec_send() {
     echo "$label: TV quittiert nicht am CEC-Bus ($CEC_DEV). HDMI-CEC/Regza-Link am TV aktiv?" >&2
     exit 1
   fi
+}
+
+# Tells the TV to show the Pi's HDMI input.
+cec_active_source() {
+  local phys
+  phys="$(cec-ctl -d "$CEC_DEV" 2>/dev/null | sed -n 's/.*Physical Address *: *\([0-9a-f.]*\).*/\1/p' | head -1)"
+  cec-ctl -d "$CEC_DEV" --to 15 --active-source "phys-addr=$phys" >/dev/null 2>&1 || true
 }
 
 # Vorbedingungen fuer alle TV-Befehle: Tool da, mindestens ein CEC-Device da.
@@ -148,6 +160,8 @@ case "$CMD" in
     cec_require tv-on
     cec_prepare
     cec_send tv-on --image-view-on
+    # Image View On wakes the TV on its last input, which need not be the Pi's.
+    cec_active_source
     echo "TV-on (CEC) ueber $CEC_DEV gesendet."
     exit 0
     ;;
@@ -157,10 +171,24 @@ case "$CMD" in
     cec_require tv-input
     cec_prepare
     if cec-ctl -d "$CEC_DEV" --to 0 --give-device-power-status 2>/dev/null | grep -q 'pwr-state: on'; then
-      PHYS="$(cec-ctl -d "$CEC_DEV" 2>/dev/null | sed -n 's/.*Physical Address *: *\([0-9a-f.]*\).*/\1/p' | head -1)"
-      cec-ctl -d "$CEC_DEV" --to 15 --active-source "phys-addr=$PHYS" >/dev/null 2>&1 || true
-      echo "TV-Eingang auf $PHYS umgeschaltet."
+      cec_active_source
+      echo "TV-Eingang auf den Pi umgeschaltet."
     fi
+    exit 0
+    ;;
+  tv-power)
+    # Asking for the power status does not wake the TV; tv-schedule.py checks with it
+    # that a TV it switched on really came on.
+    cec_require tv-power
+    cec_prepare
+    out="$(timeout 5 cec-ctl -d "$CEC_DEV" --to 0 --give-device-power-status 2>&1 || true)"
+    case "$out" in
+      *"Not Acknowledged"*) echo no-answer ;;
+      *"pwr-state: on"*) echo on ;;
+      *"pwr-state: standby"*) echo standby ;;
+      *"pwr-state: in transition"*) echo transition ;;
+      *) echo no-answer ;;
+    esac
     exit 0
     ;;
   tv-off)
