@@ -80,8 +80,13 @@ if [ -n "$IMAGE" ]; then
   for part in $(lsblk -nrpo NAME "$DEVICE" | tail -n +2); do
     umount "$part" 2>/dev/null || true
   done
+  # While the card is locked, udev neither rereads it nor lets the desktop mount it; a
+  # mount in the middle of the check writes to the card and fails it.
+  exec 9<"$DEVICE"
+  flock -x 9
   echo "Schreibe $(basename "$IMAGE") auf $DEVICE ..."
-  xzcat "$IMAGE" | dd of="$DEVICE" bs=4M oflag=direct conv=fsync status=progress
+  # fullblock: a pipe delivers short reads, which O_DIRECT would write as odd-sized chunks.
+  xzcat "$IMAGE" | dd of="$DEVICE" bs=4M iflag=fullblock oflag=direct conv=fsync status=progress
   sync
   # Read everything back past the page cache: a broken or fake card fails here, at home.
   echo "Pruefe die Karte (liest alles zurueck)..."
@@ -94,10 +99,12 @@ if [ -n "$IMAGE" ]; then
   rm -f "$WANT_FILE"
   if [ "${GOT%% *}" != "${WANT%% *}" ]; then
     echo "FEHLER: Die Karte liefert andere Daten zurueck als geschrieben."
-    echo "        Karte defekt oder gefaelscht, bitte eine andere nehmen."
+    echo "        Einmal neu versuchen; kommt der Fehler wieder, ist die Karte oder der"
+    echo "        Kartenleser defekt (USB-Leser oder andere Karte nehmen)."
     exit 1
   fi
   echo "  Karte geprueft."
+  exec 9<&-
   partprobe "$DEVICE" 2>/dev/null || blockdev --rereadpt "$DEVICE" || true
   udevadm settle 2>/dev/null || true
   for _ in $(seq 1 20); do
