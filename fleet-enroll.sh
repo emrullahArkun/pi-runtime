@@ -23,6 +23,12 @@ until curl -fsS --max-time 10 -o /dev/null "$API_URL/health"; do
 done
 echo "Server erreichbar."
 
+# The stable channel picks its commit by age, so the clock must be right first (no RTC).
+for _ in $(seq 1 "${CLOCK_WAIT_TRIES:-60}"); do
+  [ "$(timedatectl show -p NTPSynchronized --value 2>/dev/null)" = yes ] && break
+  sleep 5
+done
+
 # An older image first takes the current scripts of its channel (like every night).
 /usr/local/sbin/kiosk-selfupdate.sh || true
 

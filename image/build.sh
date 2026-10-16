@@ -2,7 +2,7 @@
 # Builds the gold image: Raspberry Pi OS Lite (64-bit) with `setup.sh --install` from
 # pi-runtime already run, but without any identity (user password, SSH keys, hostname,
 # enrollment come from provision-pi.sh). Result in the cache, where provision-pi.sh
-# picks it up:  ~/.cache/big-kiosk/big-kiosk-<date>.img.xz (+ .sha256)
+# picks it up:  ~/.cache/big-kiosk/big-kiosk-<date>.img.xz (+ .sha256, .runtime = pi-runtime commit)
 #
 # Runs on the laptop in Docker (privileged, for the loop devices), 20-40 min. Registers the
 # ARM emulation itself when it is missing (it does not survive a reboot of the laptop).

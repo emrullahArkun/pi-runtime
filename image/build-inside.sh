@@ -127,5 +127,7 @@ echo "  Packen ($(( $(stat -c %s "$IMG") / 1024 / 1024 )) MB)..."
 xz -T0 -6 -c "$IMG" > "/cache/$OUT.tmp"
 mv "/cache/$OUT.tmp" "/cache/$OUT"
 (cd /cache && sha256sum "$OUT" > "$OUT.sha256")
-chown "$OWNER" "/cache/$OUT" "/cache/$OUT.sha256" "/cache/${OUT%.img.xz}.setup.log"
+# provision-pi.sh compares it with pi-runtime to spot an outdated image.
+echo "$RUNTIME_COMMIT" > "/cache/${OUT%.img.xz}.runtime"
+chown "$OWNER" "/cache/$OUT" "/cache/$OUT.sha256" "/cache/${OUT%.img.xz}.setup.log" "/cache/${OUT%.img.xz}.runtime"
 echo "  pi-runtime $RUNTIME_COMMIT"

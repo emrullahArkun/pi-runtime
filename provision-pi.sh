@@ -32,6 +32,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONF="$SCRIPT_DIR/fleet.conf"
 PI_USER="gebetszeiten-app"
 CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/big-kiosk"
+RUNTIME_REPO="https://github.com/emrullahArkun/pi-runtime.git"
 
 NAME=""
 DEVICE=""
@@ -103,6 +104,36 @@ candidate_devices() {
 
 describe() { lsblk -dno SIZE,MODEL "$1" | sed 's/  */ /g'; }
 
+# The newest gold image from image/build.sh that is intact, or nothing.
+newest_gold_image() {
+  local gold golds
+  mapfile -t golds < <(printf '%s\n' "$CACHE_DIR"/big-kiosk-*.img.xz | sort -r)
+  for gold in "${golds[@]}"; do
+    [ -f "$gold" ] || continue
+    if (cd "$CACHE_DIR" && sha256sum -c --quiet "$(basename "$gold").sha256" 2>/dev/null); then
+      echo "$gold"
+      return
+    fi
+    echo "WARN: $(basename "$gold") ist beschaedigt oder ohne Pruefsumme, uebersprungen." >&2
+  done
+}
+
+# A gold image is a snapshot of pi-runtime; true when it still has the newest commit.
+gold_image_current() {
+  local have latest
+  have="$(cat "${1%.img.xz}.runtime" 2>/dev/null || true)"
+  latest="$(git ls-remote "$RUNTIME_REPO" refs/heads/main 2>/dev/null | cut -f1)"
+  if [ -z "$latest" ]; then
+    echo "WARN: pi-runtime nicht erreichbar, Stand von $(basename "$1") ungeprueft."
+    return 0
+  fi
+  [ "$have" = "$latest" ] && return 0
+  echo
+  have="${have:0:7}"
+  echo "Gold-Image $(basename "$1") ist veraltet: Stand ${have:-unbekannt}, pi-runtime ist bei ${latest:0:7}."
+  return 1
+}
+
 # --- Name ---
 while ! printf '%s' "$NAME" | grep -qE '^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$'; do
   [ -n "$NAME" ] && echo "  Nur Kleinbuchstaben, Zahlen und Bindestriche."
@@ -144,17 +175,15 @@ if [ "$WRITE_OS" = "1" ]; then
   unset RAW
   PW_HASH="$(openssl passwd -6 -stdin <<< "$DEVICE_PASSWORD")"
 
-  # The newest gold image from image/build.sh, if there is one and it is intact.
   if [ -z "$IMAGE" ] && [ "$OFFICIAL" = "0" ]; then
-    mapfile -t GOLD_IMAGES < <(printf '%s\n' "$CACHE_DIR"/big-kiosk-*.img.xz | sort -r)
-    for gold in "${GOLD_IMAGES[@]}"; do
-      [ -f "$gold" ] || continue
-      if (cd "$CACHE_DIR" && sha256sum -c --quiet "$(basename "$gold").sha256" 2>/dev/null); then
-        IMAGE="$gold"
-        break
+    IMAGE="$(newest_gold_image)"
+    if [ -n "$IMAGE" ] && ! gold_image_current "$IMAGE"; then
+      echo "  Der Pi startet sonst mit dem alten Stand und holt den neuen erst selbst nach."
+      if confirm "  Jetzt ein neues Gold-Image bauen (20-40 min)?"; then
+        bash "$SCRIPT_DIR/image/build.sh"
+        IMAGE="$(newest_gold_image)"
       fi
-      echo "WARN: $(basename "$gold") ist beschaedigt oder ohne Pruefsumme, uebersprungen."
-    done
+    fi
   fi
 fi
 

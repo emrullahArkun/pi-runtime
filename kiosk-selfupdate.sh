@@ -77,10 +77,17 @@ check_release() {
 }
 check_release
 
+clock_synced() { [ "${NTP_SYNCED:-$(timedatectl show -p NTPSynchronized --value 2>/dev/null)}" = yes ]; }
+
 if [ "$CHANNEL" = "early" ]; then
   TARGET="$MAIN_HEAD"
-else
+elif clock_synced; then
   TARGET="$(g rev-list -1 --before="$STABLE_AGE_H hours ago" "$MAIN_HEAD")"
+else
+  # Without a real-time clock the Pi starts at the time of its image build until NTP
+  # answers; "24 hours ago" would then pick a commit older than the image and change nothing.
+  log "SKIP: Uhr nicht abgeglichen, Kanal stable braucht die echte Zeit."
+  exit 0
 fi
 
 # Never step back: a Pi that already has TARGET (e.g. freshly cloned, or just moved from
