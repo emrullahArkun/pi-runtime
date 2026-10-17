@@ -107,7 +107,7 @@ if [ "$(cat "${TV_SCHEDULE_SWITCH:-/etc/fleet/tv-schedule}" 2>/dev/null || true)
 else
   case "$(cat "${TV_SCHEDULE_STATE:-/var/lib/fleet/tv-schedule-state}" 2>/dev/null || true)" in
     on) TV_SCHEDULE=on ;;
-    off) TV_SCHEDULE=off ;;
+    off | rest) TV_SCHEDULE=off ;;
   esac
 fi
 # "<result> <epoch>" of the schedule's last switch.

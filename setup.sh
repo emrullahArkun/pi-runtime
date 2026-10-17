@@ -402,7 +402,8 @@ sudo chmod 644 /etc/cron.d/kiosk-daily-reboot
 
 # --- TV off at night (HDMI-CEC) ---
 # Off at Yatsi + 1 h (not before 23:00), on at Imsak - 30 min (not after 04:00), from the
-# prayer times of the kiosk's place. `echo off > /etc/fleet/tv-schedule` disables it.
+# prayer times of the kiosk's place. `echo off > /etc/fleet/tv-schedule` disables it,
+# weekdays in /etc/fleet/tv-off-days ("mo di mi do fr") skip the morning wake-up.
 echo "[+] Fernseher nachts aus (tv-schedule)..."
 sudo install -m 0755 -o root -g root "$SCRIPT_DIR/tv-schedule.py" /usr/local/sbin/fleet-tv-schedule
 sudo tee /etc/cron.d/kiosk-tv-schedule > /dev/null << 'EOF'

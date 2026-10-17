@@ -5,6 +5,9 @@ Off at Yatsı + 1 h, not before 23:00; on at İmsak − 30 min, not after 04:00,
 prayer times of the kiosk's place. Acts only when the phase changes, so a TV someone
 switched on at night stays on. `off` in /etc/fleet/tv-schedule disables it.
 
+Weekdays in /etc/fleet/tv-off-days ("mo di mi do fr") skip the morning wake-up; the
+night still switches off. Ramadan, Bayram and kandil days keep the TV on.
+
 Some TVs acknowledge the wake-up and stay in standby, so switching on is checked and
 tried twice. The result goes to the heartbeat via /var/lib/fleet/tv-switch.
 """
@@ -21,6 +24,7 @@ from pathlib import Path
 
 CONFIG = Path(os.environ.get("FLEET_CONFIG", "/etc/fleet/config"))
 SWITCH = Path(os.environ.get("TV_SCHEDULE_SWITCH", "/etc/fleet/tv-schedule"))
+OFF_DAYS = Path(os.environ.get("TV_OFF_DAYS", "/etc/fleet/tv-off-days"))
 STATE_DIR = Path(os.environ.get("STATE_DIR", "/var/lib/fleet"))
 FLEET_CONTROL = os.environ.get("FLEET_CONTROL", "/usr/local/sbin/fleet-control")
 
@@ -36,6 +40,8 @@ BEFORE_IMSAK_RAMADAN = dt.timedelta(minutes=90)
 KANDIL_NIGHTS = {"Regaib Kandili", "Miraç Kandili", "Berat Kandili", "Mevlid Kandili", "Kadir Gecesi"}
 RAMADAN_START = "Ramazan Başlangıcı"
 RAMADAN_END = "Ramazan Bayramı (1. Gün)"
+FEASTS = ("Ramazan Bayramı", "Kurban Bayramı")
+WEEKDAYS = ("mo", "di", "mi", "do", "fr", "sa", "so")
 ON_ATTEMPTS = 2
 ON_CHECKS = 6
 CHECK_EVERY_S = 10
@@ -48,6 +54,7 @@ class Special:
     def __init__(self, holidays=()):
         named = [(h.get("date"), h.get("tr")) for h in holidays if isinstance(h, dict)]
         self.kandil = {date for date, name in named if name in KANDIL_NIGHTS}
+        self.feast = {date for date, name in named if isinstance(name, str) and name.startswith(FEASTS)}
         # A date marks the evening the holy night begins, and the first day of fasting.
         self.fasting = set()
         ends = sorted(date for date, name in named if name == RAMADAN_END and isinstance(date, str))
@@ -92,12 +99,18 @@ def night(table, day, special=NO_SPECIAL):
     return (off, on) if off < on else None
 
 
-def phase(table, now, special=NO_SPECIAL):
+def rest_day(day, special, off_days):
+    iso = day.isoformat()
+    return day.weekday() in off_days and iso not in special.fasting | special.feast | special.kandil
+
+
+def phase(table, now, special=NO_SPECIAL, off_days=frozenset()):
+    """off at night, rest on a day off (the TV stays as it is), otherwise on."""
     for day in (now.date() - dt.timedelta(days=1), now.date()):
         window = night(table, day, special)
         if window and window[0] <= now < window[1]:
             return "off"
-    return "on"
+    return "rest" if rest_day(now.date(), special, off_days) else "on"
 
 
 def read(path):
@@ -111,6 +124,11 @@ def write(path, text):
     tmp = path.with_suffix(".tmp")
     tmp.write_text(text)
     tmp.replace(path)
+
+
+def off_days():
+    words = re.split(r"[\s,]+", read(OFF_DAYS).lower())
+    return frozenset(WEEKDAYS.index(w) for w in words if w in WEEKDAYS)
 
 
 def location():
@@ -217,14 +235,15 @@ def main(now=None):
     table = load_table(location(), now)
     if table is None:
         return
-    want = phase(table, now, load_special(now))
+    want = phase(table, now, load_special(now), off_days())
     state = STATE_DIR / "tv-schedule-state"
     last = read(state)
     if last == want:
         return
     write(state, want)
-    # The first run only learns the phase: switching mid-window would surprise.
-    if last:
+    # The first run only learns the phase: switching mid-window would surprise. Entering
+    # a day off switches nothing, so a TV someone turned on stays on until the night.
+    if last and want != "rest":
         switch_tv("tv-off" if want == "off" else "tv-on")
 
 
