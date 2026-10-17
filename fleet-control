@@ -18,6 +18,7 @@
 #   tv-off           Fernseher per HDMI-CEC in Standby schicken
 #   tv-power         Zustand des Fernsehers: on, standby, transition oder no-answer
 #   tv-input         auf den HDMI-Eingang des Pi umschalten, nur wenn der TV schon an ist
+#   live             Momentaufnahme (CPU, Temperatur, RAM, WLAN) als JSON-Zeile fuers Panel
 #
 # Alles andere -> exit 1 mit Fehlermeldung.
 # ============================================
@@ -189,6 +190,27 @@ case "$CMD" in
       *"pwr-state: in transition"*) echo transition ;;
       *) echo no-answer ;;
     esac
+    exit 0
+    ;;
+  live)
+    # Polled every few seconds while the Pi is open in the panel, so only /proc and /sys:
+    # no sudo, no CEC traffic to the TV.
+    PROC="${PROC_DIR:-/proc}"
+    cpu_ticks() {
+      awk '$1 == "cpu" {t = 0; for (i = 2; i <= NF; i++) t += $i; print t, $5 + $6; exit}' "$PROC/stat" 2>/dev/null || echo "0 0"
+    }
+    read -r T1 I1 < <(cpu_ticks)
+    sleep "${LIVE_SAMPLE_S:-0.5}"
+    read -r T2 I2 < <(cpu_ticks)
+    CPU=null
+    [ $((T2 - T1)) -gt 0 ] && CPU=$((100 * ((T2 - T1) - (I2 - I1)) / (T2 - T1)))
+    TEMP="$(awk '{printf "%.1f", $1/1000}' "${THERMAL_FILE:-/sys/class/thermal/thermal_zone0/temp}" 2>/dev/null || true)"
+    LOAD1="$(awk '{print $1}' "$PROC/loadavg" 2>/dev/null || true)"
+    MEM="$(awk '/^MemTotal:/{t=$2}/^MemAvailable:/{a=$2}END{if(t>0)printf "%d",(t-a)/t*100}' "$PROC/meminfo" 2>/dev/null || true)"
+    DBM="$(awk 'NR > 2 {gsub(/\./, "", $4); print int($4); exit}' "$PROC/net/wireless" 2>/dev/null || true)"
+    UP="$(cut -d. -f1 "$PROC/uptime" 2>/dev/null || true)"
+    printf '{"temp":%s,"cpu_pct":%s,"load1":%s,"mem_used_pct":%s,"wifi_signal_dbm":%s,"uptime_seconds":%s}\n' \
+      "${TEMP:-null}" "$CPU" "${LOAD1:-null}" "${MEM:-null}" "${DBM:-null}" "${UP:-null}"
     exit 0
     ;;
   tv-off)
