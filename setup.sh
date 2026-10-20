@@ -169,9 +169,12 @@ if ! grep -q "^dtparam=watchdog=on" /boot/firmware/config.txt; then
 fi
 
 # --- Systemd-Watchdog: nach 15s ohne Heartbeat Reboot ausloesen ---
+# A drop-in instead of editing system.conf, which newer systemd no longer ships in /etc.
+# Takes effect at the next boot.
 echo "[5/8] Systemd-Watchdog aktivieren..."
-sudo sed -i 's/^#*RuntimeWatchdogSec=.*/RuntimeWatchdogSec=15s/' /etc/systemd/system.conf
-sudo sed -i 's/^#*RebootWatchdogSec=.*/RebootWatchdogSec=2min/' /etc/systemd/system.conf
+sudo install -d -m 0755 /etc/systemd/system.conf.d
+printf '[Manager]\nRuntimeWatchdogSec=15s\nRebootWatchdogSec=2min\n' \
+  | sudo tee /etc/systemd/system.conf.d/90-big-kiosk-watchdog.conf > /dev/null
 
 # --- User zu noetigen Gruppen hinzufuegen (DRM, Input, TTY) ---
 echo "[6/8] User-Gruppen setzen..."
@@ -315,10 +318,25 @@ fi
 
 # --- Swap only in RAM ---
 # Raspberry Pi OS pages idle memory out to /var/swap on the SD card (zram+file); the kiosk
-# keeps its compressed swap in RAM only. /tmp and the journal are in RAM already.
+# keeps its compressed swap in RAM only.
 if [ -f /etc/rpi/swap.conf ]; then
   sudo install -d -m 0755 /etc/rpi/swap.conf.d
   printf '[Main]\nMechanism=zram\n' | sudo tee /etc/rpi/swap.conf.d/big-kiosk.conf > /dev/null
+fi
+
+# --- Journal on the SD card ---
+# Raspberry Pi OS keeps it in RAM (40-rpi-volatile-storage.conf), so the 03:00 reboot erased
+# the logs of every night the Pi went offline. A few MB a day, capped at 100 MB.
+echo "[+] Journal dauerhaft speichern..."
+JOURNALD_CONF=/etc/systemd/journald.conf.d/90-big-kiosk.conf
+JOURNALD_WANT="$(printf '[Journal]\nStorage=persistent\nSystemMaxUse=100M\n')"
+if [ "$(cat "$JOURNALD_CONF" 2>/dev/null)" != "$JOURNALD_WANT" ]; then
+  sudo install -d -m 0755 /etc/systemd/journald.conf.d
+  echo "$JOURNALD_WANT" | sudo tee "$JOURNALD_CONF" > /dev/null
+  # Lost to 40-rpi-volatile-storage.conf (prepare-sd.sh before this file).
+  sudo rm -f /etc/systemd/journald.conf.d/10-persistent.conf
+  sudo install -d -m 2755 -g systemd-journal /var/log/journal
+  if [ "$IN_CHROOT" = "0" ]; then sudo systemctl restart systemd-journald; fi
 fi
 
 # The first-boot wizard of Raspberry Pi OS would ask on tty8 to rename the user.
@@ -698,6 +716,33 @@ EOF
   # kioskId) schon vor dem naechsten Kiosk-Start existiert. No-op wenn der
   # Tunnel gerade nicht steht — der Timer holt es dann spaeter nach.
   sudo systemctl start fleet-heartbeat.service || true
+
+  # Without it a hung Wi-Fi or tunnel stayed offline until the 03:00 reboot.
+  echo "  [C] Netz-Waechter (WireGuard, Netzwerk, Neustart)..."
+  sudo install -m 0755 -o root -g root "$SCRIPT_DIR/net-watchdog.sh" /usr/local/sbin/fleet-net-watchdog
+  sudo tee /etc/systemd/system/fleet-net-watchdog.service > /dev/null << EOF
+[Unit]
+Description=Fleet network watchdog (bringt den WG-Tunnel zurueck)
+After=wg-quick@wg0.service network-online.target
+
+[Service]
+Type=oneshot
+Environment=FLEET_HEARTBEAT_URL=${HEARTBEAT_URL}
+ExecStart=/usr/local/sbin/fleet-net-watchdog
+EOF
+  sudo tee /etc/systemd/system/fleet-net-watchdog.timer > /dev/null << 'EOF'
+[Unit]
+Description=Fleet network watchdog every 2 minutes
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=2min
+
+[Install]
+WantedBy=timers.target
+EOF
+  sudo systemctl daemon-reload
+  sudo systemctl enable --now fleet-net-watchdog.timer
 fi
 
 # ─── Block D: Remote-Control (IDEMPOTENT) ─────────────────────────────

@@ -296,18 +296,17 @@ BACKSPACE="guess"
 EOF
 
 # --- Persistent Journal aktivieren ---
-# Bookworm-Default: journalctl-Logs landen in /run (tmpfs, weg nach Reboot).
-# Damit wir bei WLAN-Fehlern nachsehen koennen, journald explizit auf disk
-# umstellen — Directory anlegen + Storage=persistent in journald.conf.d.
+# Raspberry Pi OS keeps the journal in RAM (40-rpi-volatile-storage.conf); same drop-in as
+# setup.sh, which sorts after that file.
 echo "[8/8] Persistent Journal aktivieren..."
 install -d -m 2755 -o root -g systemd-journal "$ROOT_DIR/var/log/journal" 2>/dev/null \
   || install -d -m 0755 "$ROOT_DIR/var/log/journal"
 
 install -d -m 0755 -o root -g root "$ROOT_DIR/etc/systemd/journald.conf.d"
-cat > "$ROOT_DIR/etc/systemd/journald.conf.d/10-persistent.conf" << 'EOF'
+cat > "$ROOT_DIR/etc/systemd/journald.conf.d/90-big-kiosk.conf" << 'EOF'
 [Journal]
 Storage=persistent
-SystemMaxUse=200M
+SystemMaxUse=100M
 EOF
 
 # --- WLAN-Country zusaetzlich global setzen (manche Tools brauchen das) ---
