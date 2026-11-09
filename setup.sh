@@ -167,6 +167,11 @@ fi
 if ! grep -q "^dtparam=watchdog=on" /boot/firmware/config.txt; then
   echo "dtparam=watchdog=on" | sudo tee -a /boot/firmware/config.txt > /dev/null
 fi
+# The firmware would wake the TV over CEC at every boot, also at the 03:00 reboot, and
+# Android TVs woken before the Pi shows a picture land on their home screen.
+if ! grep -q "^hdmi_ignore_cec_init=" /boot/firmware/config.txt; then
+  echo "hdmi_ignore_cec_init=1" | sudo tee -a /boot/firmware/config.txt > /dev/null
+fi
 
 # --- Systemd-Watchdog: nach 15s ohne Heartbeat Reboot ausloesen ---
 # A drop-in instead of editing system.conf, which newer systemd no longer ships in /etc.

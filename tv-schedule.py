@@ -10,6 +10,10 @@ night still switches off. Ramadan, Bayram and kandil days keep the TV on.
 
 Some TVs acknowledge the wake-up and stay in standby, so switching on is checked and
 tried twice. The result goes to the heartbeat via /var/lib/fleet/tv-switch.
+
+Android TVs can lose the input switch while they boot and end up on their home screen,
+so during the day the Pi claims the TV's input again every few minutes (only if the TV
+is on; it never wakes one).
 """
 
 import datetime as dt
@@ -45,6 +49,7 @@ WEEKDAYS = ("mo", "di", "mi", "do", "fr", "sa", "so")
 ON_ATTEMPTS = 2
 ON_CHECKS = 6
 CHECK_EVERY_S = 10
+INPUT_EVERY_MIN = 5
 sleep = time.sleep
 
 
@@ -208,6 +213,7 @@ def switch_on():
             ok, out = control("tv-power")
             power = out if ok else ""
             if power == "on":
+                control("tv-input")
                 log(f"tv-on: an (Versuch {attempt})")
                 return "on"
     if power == "standby":
@@ -239,6 +245,8 @@ def main(now=None):
     state = STATE_DIR / "tv-schedule-state"
     last = read(state)
     if last == want:
+        if want == "on" and now.minute % INPUT_EVERY_MIN == 0:
+            control("tv-input")
         return
     write(state, want)
     # The first run only learns the phase: switching mid-window would surprise. Entering
